@@ -1,106 +1,76 @@
-use std::{default, io};
+use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Alignment, Constraint, Layout, Rect}, style::{Color, Modifier, Style}, text::{Line, Span}, widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Table, TableState, Widget}, Frame};
+use serde_json::Value;
 
-use log::debug;
-use ratatui::{crossterm::{event::{KeyCode, KeyEvent}, execute, terminal::{disable_raw_mode, LeaveAlternateScreen}}, layout::{Alignment, Constraint, Direction, Layout, Rect}, style::{Color, Modifier, Style}, text::{Line, Span}, widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Table, TableState}, Frame};
-use serde_json::{Map, Value};
-
-use crate::{drive::DiskPlanIRBuilder, object_merge, page::{Audio, Bootloader, ChooseDiskDevice, DesktopEnv, DiskChooseStrategy, Drives, Greeter, Hostname, Kernels, KeyboardLayout, Language, Locale, Network, Page, Profile, RootPassword, SourceConfig, Swap, Timezone, UseFlakes, NO_SELECTION}};
-
-pub fn extract_signals(ret: Option<Value>, keys: &[String]) -> Option<(String,String)> {
-	if let Some(Value::Object(map)) = ret {
-		for key in keys {
-			if let Some(Value::String(s)) = map.get(key) {
-				return Some((key.clone(), s.clone()));
-			}
-		}
-	}
-	None
-}
-
-pub fn make_signal(key: &str, value: &str) -> Value {
-	let mut map = Map::new();
-	map.insert(key.to_string(), Value::String(value.to_string()));
-	Value::Object(map)
-}
+use crate::installer::Signal;
 
 pub trait ConfigWidget {
 	fn render(&self, f: &mut Frame, area: Rect);
-	fn confirm(&mut self) -> Option<Value>;
-	fn is_focused(&self) -> bool;
+	fn handle_input(&mut self, key: KeyEvent) -> Signal;
 	fn focus(&mut self);
 	fn unfocus(&mut self);
-	fn handle_input(&mut self, key: KeyEvent) -> Option<Value>;
-	fn to_value(&self) -> Option<Value>;
+	fn is_focused(&self) -> bool;
+	fn get_value(&self) -> Option<Value> {
+		None
+	}
 }
 
-pub struct Button {
-	pub label: String,
-	pub focused: bool
+pub struct WidgetBoxBuilder {
+	title: Option<String>,
+	layout: Option<Layout>,
+	widgets: Vec<Box<dyn ConfigWidget>>,
+	input_callback: Option<InputCallbackWidget>,
+	render_borders: Option<bool>
 }
 
-impl Button {
-	pub fn new(label: impl Into<String>) -> Self {
+impl WidgetBoxBuilder {
+	pub fn new() -> Self {
 		Self {
-			label: label.into(),
-			focused: false
+			title: None,
+			layout: None,
+			widgets: vec![],
+			input_callback: None,
+			render_borders: None
 		}
+	}
+	pub fn title(mut self, title: impl Into<String>) -> Self {
+		self.title = Some(title.into());
+		self
+	}
+	pub fn layout(mut self, layout: Layout) -> Self {
+		self.layout = Some(layout);
+		self
+	}
+	pub fn children(mut self, widgets: Vec<Box<dyn ConfigWidget>>) -> Self {
+		self.widgets = widgets;
+		self
+	}
+	pub fn input_callback(mut self, callback: InputCallbackWidget) -> Self {
+		self.input_callback = Some(callback);
+		self
+	}
+	pub fn render_borders(mut self, render: bool) -> Self {
+		self.render_borders = Some(render);
+		self
+	}
+	fn get_default_layout(mut num_widgets: usize) -> Layout {
+		if num_widgets == 0 { num_widgets = 1; } // avoid division by zero
+		let space_per_widget = 100 / num_widgets;
+		let mut constraints = vec![];
+		for _ in 0..num_widgets {
+			constraints.push(ratatui::layout::Constraint::Percentage(space_per_widget as u16));
+		}
+		Layout::default().direction(ratatui::layout::Direction::Horizontal).constraints(constraints)
+	}
+	pub fn build(self) -> WidgetBox {
+		let title = self.title.unwrap_or_default();
+		let num_widgets = self.widgets.len();
+		let layout = self.layout.unwrap_or_else(|| Self::get_default_layout(num_widgets));
+		let render_borders = self.render_borders.unwrap_or(false);
+		WidgetBox::new(title, layout, self.widgets, self.input_callback, render_borders)
 	}
 }
 
-impl ConfigWidget for Button {
-	fn handle_input(&mut self, key: KeyEvent) -> Option<Value> {
-		if key.code == KeyCode::Enter {
-			self.confirm()
-		} else {
-			None
-		}
-	}
-
-	fn focus(&mut self) {
-		self.focused = true;
-	}
-
-	fn is_focused(&self) -> bool {
-		self.focused
-	}
-
-	fn confirm(&mut self) -> Option<Value> {
-		let mut map = Map::new();
-		map.insert("button_pressed".into(), Value::String(self.label.clone()));
-		Some(Value::Object(map))
-	}
-
-	fn unfocus(&mut self) {
-		self.focused = false;
-	}
-
-	fn render(&self, f: &mut Frame, area: Rect) {
-		let style = if self.focused {
-			Style::default()
-				.fg(Color::Black)
-				.bg(Color::Cyan)
-				.add_modifier(Modifier::BOLD)
-		} else {
-			Style::default()
-				.fg(Color::White)
-				.bg(Color::Reset)
-		};
-
-		let content = Paragraph::new(Span::styled(
-			format!(" {} ", self.label),
-			style,
-		))
-		.alignment(Alignment::Center)
-		.block(Block::default().style(style));
-
-		f.render_widget(content, area);
-	}
-
-	fn to_value(&self) -> Option<Value> {
-		None // Buttons do not produce a value
-	}
-}
-
+pub type InputCallbackWidget = Box<dyn FnMut(&mut dyn ConfigWidget, KeyEvent) -> Signal>;
 pub struct WidgetBox {
 	pub focused: bool,
 	pub focused_child: Option<usize>,
@@ -112,74 +82,112 @@ pub struct WidgetBox {
 }
 
 impl WidgetBox {
-	pub fn next_child(&mut self) {
-		if let Some(idx) = self.focused_child {
-			let next_idx = (idx + 1) % self.widgets.len();
+	pub fn new(
+		title: String,
+		layout: Layout,
+		widgets: Vec<Box<dyn ConfigWidget>>,
+		input_callback: Option<InputCallbackWidget>,
+		render_borders: bool
+	) -> Self {
+		Self {
+			focused: false,
+			focused_child: if widgets.is_empty() { None } else { Some(0) },
+			title,
+			layout,
+			widgets,
+			input_callback,
+			render_borders
+		}
+	}
+	pub fn first_child(&mut self) {
+		self.focused_child = Some(0);
+	}
+	pub fn last_child(&mut self) {
+		self.focused_child = Some(self.widgets.len().saturating_sub(1));
+	}
+	pub fn next_child(&mut self) -> bool {
+		let idx = self.focused_child.unwrap_or(0);
+		if idx + 1 < self.widgets.len() {
+			let next_idx = idx + 1;
 			self.widgets[idx].unfocus();
 			self.focused_child = Some(next_idx);
 			self.widgets[next_idx].focus();
+
+			true
+		} else {
+			false
 		}
 	}
-	pub fn prev_child(&mut self) {
-		if let Some(idx) = self.focused_child {
-			let prev_idx = if idx == 0 {
-				self.widgets.len() - 1
-			} else {
-				idx - 1
-			};
+	pub fn prev_child(&mut self) -> bool {
+		let idx = self.focused_child.unwrap_or(0);
+		if idx > 0 {
+			let prev_idx = idx - 1;
 			self.widgets[idx].unfocus();
 			self.focused_child = Some(prev_idx);
 			self.widgets[prev_idx].focus();
+
+			true
+		} else {
+			false
 		}
+	}
+	pub fn selected_child(&self) -> Option<usize> {
+		self.focused_child
+	}
+
+	pub fn button_menu(buttons: Vec<Button>) -> Self {
+		let num_btns = buttons.len();
+		let children: Vec<Box<dyn ConfigWidget>> = buttons.into_iter().map(|btn| Box::new(btn) as Box<dyn ConfigWidget>).collect();
+		let mut constraints = vec![];
+		for _ in 0..num_btns {
+			constraints.push(Constraint::Length(1))
+		}
+		let layout = Layout::default()
+			.direction(ratatui::layout::Direction::Vertical)
+			.constraints(constraints);
+		WidgetBoxBuilder::new()
+			.layout(layout)
+			.children(children)
+			.build()
 	}
 }
 
 impl ConfigWidget for WidgetBox {
-	fn handle_input(&mut self, key: KeyEvent) -> Option<Value> {
-		let mut ret = None;
+	fn handle_input(&mut self, key: KeyEvent) -> Signal {
+		let mut ret = Signal::Wait;
 		if let Some(callback) = self.input_callback.as_mut() {
 			if let Some(idx) = self.focused_child {
-				if let Some(value) = callback(self.widgets[idx].as_mut(), key) {
-					ret = Some(value);
-				}
+				ret = callback(self.widgets[idx].as_mut(), key);
 			}
 		}
-		if let Some(signal) = extract_signals(ret, ["next_child".into(), "prev_child".into()].as_ref()) {
-			match signal.0.as_str() {
-				"next_child" => {
-					self.next_child();
-					return None;
-				}
-				"prev_child" => {
-					self.prev_child();
-					return None;
-				}
-				_ => {}
+		match ret {
+			_ => {
+				self.widgets[self.focused_child.unwrap_or(0)].handle_input(key)
 			}
 		}
-		self.widgets[self.focused_child.unwrap_or(0)].handle_input(key)
 	}
 
 	fn focus(&mut self) {
 	  self.focused = true;
-		self.focused_child = Some(0);
-		self.widgets[0].focus();
+		let Some(idx) = self.focused_child else {
+			self.focused_child = Some(0);
+			self.widgets[0].focus();
+			return;
+		};
+		if idx < self.widgets.len() {
+			self.widgets[idx].focus();
+		} else if !self.widgets.is_empty() {
+			self.focused_child = Some(0);
+			self.widgets[0].focus();
+		}
 	}
 
 	fn is_focused(&self) -> bool {
 		self.focused
 	}
 
-	fn confirm(&mut self) -> Option<Value> {
-		if let Some(idx) = self.focused_child {
-			self.widgets[idx].confirm();
-		}
-		None
-	}
-
 	fn unfocus(&mut self) {
 		self.focused = false;
-		self.focused_child = None;
 		for widget in self.widgets.iter_mut() {
 			widget.unfocus();
 		}
@@ -210,10 +218,10 @@ impl ConfigWidget for WidgetBox {
 		}
 	}
 
-	fn to_value(&self) -> Option<Value> {
+	fn get_value(&self) -> Option<Value> {
 		let mut map = serde_json::Map::new();
 		for (i, widget) in self.widgets.iter().enumerate() {
-			if let Some(value) = widget.to_value() {
+			if let Some(value) = widget.get_value() {
 				map.insert(format!("widget_{i}"), value);
 			}
 		}
@@ -225,433 +233,79 @@ impl ConfigWidget for WidgetBox {
 	}
 }
 
-/// Callback type that allows providing arbitrary logic for handling input
-pub type InputCallbackWidget = Box<dyn FnMut(&mut dyn ConfigWidget, KeyEvent) -> Option<Value>>;
-pub type InputCallbackPage = Box<dyn FnMut(&mut dyn Page, KeyEvent) -> Option<Value>>;
-/// A list of pages, only one of which is active at a time.
-pub struct PageList {
-	pub focused: bool,
-	pub selected_idx: usize,
-	pub pages: Vec<Box<dyn Page>>,
-	pub input_callback: Option<InputCallbackPage>
+pub struct Button {
+	pub label: String,
+	pub focused: bool
 }
 
-impl PageList {
-	pub fn new(
-		pages: Vec<Box<dyn Page>>,
-		input_callback: Option<InputCallbackPage>
-	) -> Self {
+impl Button {
+	pub fn new(label: impl Into<String>) -> Self {
 		Self {
-			focused: false,
-			selected_idx: 0,
-			pages,
-			input_callback
-		}
-	}
-
-	pub fn switch_to_page_by_title(&mut self, title: &str) -> bool {
-		if let Some((idx, _)) = self.pages.iter().enumerate().find(|(_, p)| p.title() == title) {
-			if idx != self.selected_idx {
-				self.pages[self.selected_idx].unfocus();
-				self.selected_idx = idx;
-				if self.focused {
-					self.pages[self.selected_idx].focus();
-				}
-			}
-			true
-		} else {
-			false
+			label: label.into(),
+			focused: false
 		}
 	}
 }
 
-impl ConfigWidget for PageList {
-	fn handle_input(&mut self, key: KeyEvent) -> Option<Value> {
-		let mut switch_page = None;
-		if let Some(callback) = self.input_callback.as_mut() {
-			if let Some(page) = self.pages.get_mut(self.selected_idx) {
-				let ret = callback(page.as_mut(), key);
-				match ret {
-					Some(ref val) => {
-						let Some((_,title)) = extract_signals(Some(val.clone()), &["switch_page".into()]) else { return ret; };
-						switch_page = Some(title.clone());
-					}
-					None => return ret
-				}
-			}
-		}
-		if let Some(title) = switch_page {
-			self.switch_to_page_by_title(&title);
-			return None;
-		}
-		if let Some(page) = self.pages.get_mut(self.selected_idx) {
-			page.handle_input(key)
-		} else {
-			None
-		}
+impl ConfigWidget for Button {
+	fn handle_input(&mut self, key: KeyEvent) -> Signal {
+		Signal::Wait
 	}
 
 	fn focus(&mut self) {
 		self.focused = true;
-		self.pages[self.selected_idx].focus();
 	}
 
 	fn is_focused(&self) -> bool {
 		self.focused
 	}
 
-	fn confirm(&mut self) -> Option<Value> {
-		if let Some(page) = self.pages.get_mut(self.selected_idx) {
-			page.confirm();
-		}
-		None
-	}
-
 	fn unfocus(&mut self) {
 		self.focused = false;
-		self.pages[self.selected_idx].unfocus();
 	}
 
 	fn render(&self, f: &mut Frame, area: Rect) {
-		if let Some(page) = self.pages.get(self.selected_idx) {
-			page.render(f, area);
+		let style = if self.focused {
+			Style::default()
+				.fg(Color::Black)
+				.bg(Color::Cyan)
+				.add_modifier(Modifier::BOLD)
 		} else {
-			let block = Block::default()
-				.title("No Page Selected")
-				.borders(Borders::ALL)
-				.style(Style::default().fg(Color::Red));
-			f.render_widget(block, area);
-		}
-	}
-
-	fn to_value(&self) -> Option<Value> {
-		let mut value_map = Map::new();
-		value_map.insert("config".to_string(), Value::Object(Map::new()));
-		let mut values = Value::Object(value_map);
-		for page in self.pages.iter() {
-			let value = page.to_config();
-			match page.title().as_str() {
-				"Source Configuration" | "Overlays" => {
-					values = object_merge!(values, value);
-				}
-				_ => {
-					let config = values["config"].clone();
-					let new_config = object_merge!(config, value);
-					let Value::Object(ref mut map) = values else {
-						continue;
-					};
-					map.insert("config".to_string(), new_config);
-				}
-			}
-		}
-		Some(values)
-	}
-}
-
-pub struct ConfigMenu {
-	pub titles: StrList,
-	pub pages: PageList,
-	pub button_row: WidgetBox,
-	pub selected_idx: usize,
-	pub editing_page: bool,
-}
-
-impl ConfigMenu {
-	pub fn new() -> Self {
-		let pages: Vec<String> = vec![
-			"Source Configuration".into(),
-			"Language".into(),
-			"Keyboard Layout".into(),
-		  "Locale".into(),
-		  "Use Flakes".into(),
-		  "Drives".into(),
-		  "Bootloader".into(),
-		  "Swap".into(),
-		  "Hostname".into(),
-		  // "Virtualization".into(),
-		  "Root Password".into(),
-		  // "User Accounts".into(),
-		  "Profile".into(),
-		  "Greeter".into(),
-		  "Desktop Environment".into(),
-		  "Audio".into(),
-		  "Kernels".into(),
-		  // "System Packages".into(),
-		  "Network".into(),
-		  "Timezone".into(),
-		  // "Auto Time Sync".into(),
-		  // "Overlays".into()
-		];
-		let mut page_name_list = StrList::new("", pages);
-		page_name_list.focus();
-		let page_list: Vec<Box<dyn Page>> = vec![
-			Box::new(SourceConfig::new()),
-			Box::new(Language::new()),
-			Box::new(KeyboardLayout::new()),
-			Box::new(Locale::new()),
-			Box::new(UseFlakes::new()),
-			Box::new(Drives::new()),
-			Box::new(Bootloader::new()),
-			Box::new(Swap::new()),
-			Box::new(Hostname::new()),
-			// Box::new(Virtualization::new()),
-			Box::new(RootPassword::new()),
-			// Box::new(UserAccounts::new()),
-			Box::new(Profile::new()),
-			Box::new(Greeter::new()),
-			Box::new(DesktopEnv::new()),
-			Box::new(Audio::new()),
-			Box::new(Kernels::new()),
-			// Box::new(SystemPackages::new()),
-			Box::new(Network::new()),
-			Box::new(Timezone::new()),
-			// Box::new(AutoTimeSync::new()),
-			// Box::new(Overlays::new()),
-		];
-		let page_list = PageList::new(page_list, None);
-		let done_btn = Button { focused: false, label: "Done".into() };
-		let abort_btn = Button { focused: false, label: "Abort".into() };
-		let button_row = WidgetBox {
-			focused: false,
-			focused_child: None,
-			title: "".into(),
-			input_callback: None,
-			layout: Layout::default()
-				.direction(Direction::Horizontal)
-				.constraints([
-					Constraint::Percentage(50),
-					Constraint::Percentage(50)
-				]),
-			widgets: vec![
-				Box::new(done_btn),
-				Box::new(abort_btn)
-			],
-			render_borders: false
-		};
-		Self {
-			titles: page_name_list,
-			pages: page_list,
-			button_row,
-			selected_idx: 0,
-			editing_page: false
-		}
-	}
-}
-
-impl Default for ConfigMenu {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ConfigWidget for ConfigMenu {
-	fn handle_input(&mut self, key: KeyEvent) -> Option<Value> {
-		let key_code = key.code;
-		if self.button_row.is_focused() {
-			match key_code {
-				KeyCode::Up | KeyCode::Char('k') => {
-					self.button_row.unfocus();
-					self.titles.focus();
-				}
-				KeyCode::Left | KeyCode::Char('h') => {
-					self.button_row.prev_child();
-				}
-				KeyCode::Right | KeyCode::Char('l') => {
-					self.button_row.next_child();
-				}
-				KeyCode::Enter => {
-					if let Some(idx) = self.button_row.focused_child {
-						match idx {
-							0 => { // Done
-								return self.pages.to_value();
-							}
-							1 => { // Abort
-								let _ = disable_raw_mode();
-								let _ = execute!(io::stdout(), LeaveAlternateScreen);
-
-								std::process::exit(0);
-							}
-							_ => {}
-						}
-					}
-				}
-				_ => {}
-			}
-			return None
-		}
-		if !self.editing_page {
-			if key_code == KeyCode::Enter || key_code == KeyCode::Right || key_code == KeyCode::Char('l') {
-				self.editing_page = true;
-				self.titles.unfocus();
-				self.pages.focus();
-			}
-			else if (key_code == KeyCode::Down || key_code == KeyCode::Char('j'))
-				&& self.titles.selected_idx == self.titles.len() - 1
-			{
-				self.button_row.focus();
-				self.titles.unfocus();
-			} else {
-				self.titles.handle_input(key);
-				self.pages.selected_idx = self.titles.selected_idx;
-			}
-		} else if key_code == KeyCode::Esc {
-			self.editing_page = false;
-			self.titles.focus();
-			self.pages.unfocus();
-		} else {
-			self.pages.handle_input(key);
-		}
-		None
-	}
-
-	fn focus(&mut self) {}
-
-	fn is_focused(&self) -> bool {
-		false
-	}
-
-	fn confirm(&mut self) -> Option<Value> {None}
-
-	fn unfocus(&mut self) {}
-
-	fn render(&self, f: &mut Frame, area: Rect) {
-		let block = Block::default()
-			.title("Configure NixOS")
-			.borders(Borders::ALL)
-			.style(Style::default().fg(Color::White).bg(Color::Black));
-		f.render_widget(block, area);
-
-		let inner_area = Rect {
-			x: area.x + 1,
-			y: area.y + 1,
-			width: area.width.saturating_sub(2),
-			height: area.height.saturating_sub(2),
+			Style::default()
+				.fg(Color::White)
+				.bg(Color::Reset)
 		};
 
-		let chunks = Layout::default()
-			.direction(Direction::Horizontal)
-			.constraints([
-				Constraint::Percentage(20),
-				Constraint::Percentage(80)
-			])
-			.split(inner_area);
+		let content = Paragraph::new(Span::styled(
+			format!(" {} ", self.label),
+			style,
+		))
+		.alignment(Alignment::Center)
+		.block(Block::default().style(style));
 
-		let left_chunks = Layout::default()
-			.direction(Direction::Vertical)
-			.constraints([
-				Constraint::Percentage(95),
-				Constraint::Percentage(5)
-			])
-			.split(chunks[0]);
-
-		// Highlight selected title when not editing a page
-		self.titles.render(f, left_chunks[0]);
-
-
-		self.button_row.render(f, left_chunks[1]);
-
-		self.pages.render(f, chunks[1]);
+		f.render_widget(content, area);
 	}
 
-	fn to_value(&self) -> Option<Value> {
-		todo!()
-	}
-}
-
-pub struct DriveConfig {
-	pub focused: bool,
-	pub pages: PageList,
-	pub disk_setup: DiskPlanIRBuilder
-}
-
-impl DriveConfig {
-	pub fn new() -> Self {
-		let pages: Vec<Box<dyn Page>> = vec![
-			Box::new(DiskChooseStrategy::new()),
-			Box::new(ChooseDiskDevice::new())
-		];
-		let pages_input_callback: Option<InputCallbackPage> = Some(Box::new(|page, key| {
-			debug!("DriveConfig page input: page='{}' key={:?}", page.title(), key);
-			match page.title().as_str() {
-				"Disk Partitioning Strategy" => {
-					let ret = page.handle_input(key);
-					debug!("DriveConfig page input callback got ret: {:?}", ret);
-					let Some(label) = extract_signals(ret.clone(), &["button_pressed".into()]) else { return ret };
-					if label.1.as_str() == "Choose a best-effort default partition layout" {
-						let mut new_ret = Map::new();
-						new_ret.insert("switch_page".into(), Value::String("Choose Disk Device".into()));
-						Some(Value::Object(new_ret))
-					} else {
-						ret
-					}
-				}
-				_ => page.handle_input(key)
-			}
-		}));
-		Self {
-			focused: false,
-			pages: PageList::new(pages, pages_input_callback),
-			disk_setup: default::Default::default()
-		}
-	}
-}
-
-impl Default for DriveConfig {
-	fn default() -> Self {
-		Self::new()
-	}
-}
-
-impl ConfigWidget for DriveConfig {
-	fn handle_input(&mut self, key: KeyEvent) -> Option<Value> {
-		let ret = self.pages.handle_input(key);
-		if let Some(title) = extract_signals(ret.clone(), &["switch_page".into()]) {
-			self.pages.switch_to_page_by_title(&title.1);
-			None
-		} else {
-			ret
-		}
-	}
-
-	fn focus(&mut self) {
-		self.focused = true;
-		self.pages.focus();
-	}
-
-	fn is_focused(&self) -> bool {
-		self.focused
-	}
-
-	fn confirm(&mut self) -> Option<Value> {
-		// Do nothing for now
-		None
-	}
-
-	fn unfocus(&mut self) {
-		self.focused = false;
-		self.pages.unfocus();
-	}
-
-	fn render(&self, f: &mut Frame, area: Rect) {
-		self.pages.render(f, area);
-	}
-
-	fn to_value(&self) -> Option<Value> {
-		None // DriveConfig does not produce a value yet
+	fn get_value(&self) -> Option<Value> {
+		None // Buttons do not produce a value
 	}
 }
 
 pub struct LineEditor {
 	pub focused: bool,
+	pub placeholder: Option<String>,
 	pub title: String,
 	pub value: String,
 	pub cursor: usize
 }
 
 impl LineEditor {
-	pub fn new(title: String) -> Self {
+	pub fn new(title: impl ToString, placeholder: Option<impl ToString>) -> Self {
+		let title = title.to_string();
+		let placeholder = placeholder.map(|p| p.to_string());
 		Self {
 			focused: false,
+			placeholder,
 			title,
 			value: String::new(),
 			cursor: 0
@@ -662,6 +316,16 @@ impl LineEditor {
 			let span = Span::raw(self.value.clone());
 			return Line::from(span);
 		}
+
+		if self.value.is_empty() {
+			let placeholder = self.placeholder.clone().unwrap_or_else(|| "".to_string());
+			let span = Span::styled(
+				placeholder,
+				Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+			);
+			return Line::from(span);
+		}
+
 		let mut left = String::new();
 		let mut cursor_char = None;
 		let mut right = String::new();
@@ -692,23 +356,8 @@ impl LineEditor {
 }
 
 impl ConfigWidget for LineEditor {
-	fn handle_input(&mut self, key: KeyEvent) -> Option<Value> {
+	fn handle_input(&mut self, key: KeyEvent) -> Signal {
 		match key.code {
-			KeyCode::Char(c) => {
-				self.value.insert(self.cursor, c);
-				self.cursor += 1;
-			}
-			KeyCode::Backspace => {
-				if self.cursor > 0 {
-					self.cursor -= 1;
-					self.value.remove(self.cursor);
-				}
-			}
-			KeyCode::Delete => {
-				if self.cursor < self.value.len() {
-					self.value.remove(self.cursor);
-				}
-			}
 			KeyCode::Left => {
 				if self.cursor > 0 {
 					self.cursor -= 1;
@@ -719,6 +368,21 @@ impl ConfigWidget for LineEditor {
 					self.cursor += 1;
 				}
 			}
+			KeyCode::Backspace => {
+				if self.cursor > 0 && !self.value.is_empty() {
+					self.value.remove(self.cursor - 1);
+					self.cursor -= 1;
+				}
+			}
+			KeyCode::Delete => {
+				if self.cursor < self.value.len() && !self.value.is_empty() {
+					self.value.remove(self.cursor);
+				}
+			}
+			KeyCode::Char(c) => {
+				self.value.insert(self.cursor, c);
+				self.cursor += 1;
+			}
 			KeyCode::Home => {
 				self.cursor = 0;
 			}
@@ -727,34 +391,34 @@ impl ConfigWidget for LineEditor {
 			}
 			_ => {}
 		}
-		None
-	}
-	fn focus(&mut self) {
-		self.focused = true;
 		if self.cursor > self.value.len() {
 			self.cursor = self.value.len();
 		}
+		Signal::Wait
 	}
-	fn is_focused(&self) -> bool {
-		self.focused
-	}
-	fn confirm(&mut self) -> Option<Value> {
-		// Do nothing for now
-		None
-	}
-	fn unfocus(&mut self) {
-		self.focused = false;
-	}
+
 	fn render(&self, f: &mut Frame, area: Rect) {
-		let widget = self.as_widget();
-		f.render_widget(widget, area);
+		let paragraph = self.as_widget();
+		f.render_widget(paragraph, area);
 	}
-	fn to_value(&self) -> Option<Value> {
-		if self.value.is_empty() {
-			None
-		} else {
-			Some(Value::String(self.value.clone()))
-		}
+
+	fn focus(&mut self) {
+	  self.focused = true;
+	  if self.cursor > self.value.len() {
+		  self.cursor = self.value.len();
+	  }
+	}
+
+	fn is_focused(&self) -> bool {
+	  self.focused
+	}
+
+	fn unfocus(&mut self) {
+	  self.focused = false;
+	}
+
+	fn get_value(&self) -> Option<Value> {
+		Some(Value::String(self.value.clone()))
 	}
 }
 
@@ -778,6 +442,28 @@ impl StrList {
 			committed: None,
 		}
 	}
+	pub fn next_item(&mut self) -> bool {
+		if self.selected_idx + 1 < self.items.len() {
+			self.selected_idx += 1;
+			true
+		} else {
+			false
+		}
+	}
+	pub fn previous_item(&mut self) -> bool {
+		if self.selected_idx > 0 {
+			self.selected_idx -= 1;
+			true
+		} else {
+			false
+		}
+	}
+	pub fn first_item(&mut self) {
+		self.selected_idx = 0;
+	}
+	pub fn last_item(&mut self) {
+		self.selected_idx = self.items.len().saturating_sub(1);
+	}
 	pub fn len(&self) -> usize {
 		self.items.len()
 	}
@@ -785,8 +471,9 @@ impl StrList {
 		self.items.is_empty()
 	}
 }
+
 impl ConfigWidget for StrList {
-	fn handle_input(&mut self, key: KeyEvent) -> Option<Value> {
+	fn handle_input(&mut self, key: KeyEvent) -> Signal {
 		match key.code {
 			KeyCode::Up | KeyCode::Char('k') => {
 				if self.selected_idx > 0 {
@@ -804,29 +491,8 @@ impl ConfigWidget for StrList {
 			}
 			_ => {}
 		}
-		None
+		Signal::Wait
 	}
-
-	fn focus(&mut self) {
-		self.focused = true;
-		if self.selected_idx >= self.items.len() && !self.items.is_empty() {
-			self.selected_idx = self.items.len() - 1;
-		}
-	}
-	fn is_focused(&self) -> bool {
-		self.focused
-	}
-	fn confirm(&mut self) -> Option<Value> {
-		if !self.items.is_empty() {
-			self.committed = Some(self.items[self.selected_idx].clone());
-			self.committed_idx = Some(self.selected_idx);
-		}
-		None
-	}
-	fn unfocus(&mut self) {
-		self.focused = false;
-	}
-
 	fn render(&self, f: &mut Frame, area: Rect) {
 		let items: Vec<ListItem> = self
 			.items
@@ -857,15 +523,72 @@ impl ConfigWidget for StrList {
 
 		f.render_stateful_widget(list, area, &mut state);
 	}
-
-	fn to_value(&self) -> Option<Value> {
-		self.committed.as_ref().map(|s| Value::String(s.clone()))
+	fn focus(&mut self) {
+		self.focused = true;
+	}
+	fn unfocus(&mut self) {
+		self.focused = false;
+	}
+	fn is_focused(&self) -> bool {
+	  self.focused
 	}
 }
 
+pub struct InfoBox {
+	pub title: String,
+	pub content: String
+}
+
+impl InfoBox {
+	pub fn new(title: impl Into<String>, content: impl Into<String>) -> Self {
+		Self {
+			title: title.into(),
+			content: content.into()
+		}
+	}
+}
+
+impl ConfigWidget for InfoBox {
+	fn handle_input(&mut self, _key: KeyEvent) -> Signal {
+		Signal::Wait
+	}
+	fn render(&self, f: &mut Frame, area: Rect) {
+		let paragraph = Paragraph::new(self.content.clone())
+			.block(Block::default().title(self.title.clone()).borders(Borders::ALL))
+			.wrap(ratatui::widgets::Wrap { trim: true });
+		f.render_widget(paragraph, area);
+	}
+	fn focus(&mut self) {
+		// InfoBox does not need focus
+	}
+	fn unfocus(&mut self) {
+		// InfoBox does not need focus
+	}
+	fn is_focused(&self) -> bool {
+		false
+	}
+}
+
+#[derive(Debug, Clone)]
+pub struct TableRow {
+	pub headers: Vec<String>,
+	pub fields: Vec<String>,
+}
+
+impl TableRow {
+	pub fn get_field(&self, header: &str) -> Option<&String> {
+		if let Some(idx) = self.headers.iter().position(|h| h.to_lowercase() == header.to_lowercase()) {
+			self.fields.get(idx)
+		} else {
+			None
+		}
+	}
+}
+
+#[derive(Clone,Debug)]
 pub struct TableWidget {
 	pub focused: bool,
-	pub selected_row: usize,
+	pub selected_row: Option<usize>,
 	pub title: String,
 	pub num_fields: usize,
 	pub headers: Vec<String>,
@@ -878,7 +601,7 @@ impl TableWidget {
 		let num_fields = headers.len();
 		Self {
 			focused: false,
-			selected_row: NO_SELECTION,
+			selected_row: None,
 			title: title.into(),
 			num_fields,
 			headers,
@@ -886,57 +609,111 @@ impl TableWidget {
 			widths
 		}
 	}
+	pub fn set_rows(&mut self, rows: Vec<Vec<String>>) {
+		self.rows = rows;
+		if let Some(idx) = self.selected_row {
+			if idx >= self.rows.len() {
+				self.selected_row = None;
+			}
+		}
+	}
+	pub fn selected_row(&self) -> Option<usize> {
+		self.selected_row
+	}
+	pub fn last_row(&mut self) {
+		if !self.rows.is_empty() {
+			self.selected_row = Some(self.rows.len() - 1);
+		} else {
+			self.selected_row = None;
+		}
+	}
+	pub fn first_row(&mut self) {
+		if !self.rows.is_empty() {
+			self.selected_row = Some(0);
+		} else {
+			self.selected_row = None;
+		}
+	}
+	pub fn next_row(&mut self) -> bool {
+		let Some(idx) = self.selected_row else {
+			self.selected_row = Some(0);
+			return self.next_row()
+		};
+		if idx + 1 < self.rows.len() {
+			self.selected_row = Some(idx + 1);
+			true
+		} else {
+			false
+		}
+	}
+	pub fn previous_row(&mut self) -> bool {
+		let Some(idx) = self.selected_row else {
+			self.selected_row = Some(0);
+			return self.previous_row()
+		};
+		if idx > 0 {
+			self.selected_row = Some(idx - 1);
+			true
+		} else {
+			false
+		}
+	}
+	pub fn get_selected_row_info(&self) -> Option<TableRow> {
+		if let Some(idx) = self.selected_row {
+			self.get_row(idx)
+		} else {
+			None
+		}
+	}
+	pub fn get_row(&self, idx: usize) -> Option<TableRow> {
+		if idx < self.rows.len() {
+			Some(TableRow {
+				headers: self.headers.clone(),
+				fields: self.rows[idx].clone(),
+			})
+		} else {
+			None
+		}
+	}
+	pub fn rows(&self) -> &Vec<Vec<String>> {
+		&self.rows
+	}
+	pub fn len(&self) -> usize {
+		self.rows.len()
+	}
+	pub fn is_empty(&self) -> bool {
+		self.rows.is_empty()
+	}
 }
 
 impl ConfigWidget for TableWidget {
-	fn handle_input(&mut self, key: KeyEvent) -> Option<Value> {
-		debug!("TableWidget handle_input: key={:?}", key);
-		match key.code {
-			KeyCode::Up | KeyCode::Char('k') => {
-				if self.selected_row > 0 {
-					self.selected_row -= 1;
+	fn handle_input(&mut self, key: KeyEvent) -> Signal {
+		if let Some(idx) = self.selected_row.as_mut() {
+			log::debug!("TableWidget handle_input: key={:?}", key);
+			match key.code {
+				KeyCode::Up | KeyCode::Char('k') => {
+					self.next_row();
 				}
-			}
-			KeyCode::Down | KeyCode::Char('j') => {
-				if self.selected_row + 1 < self.rows.len() {
-					self.selected_row += 1;
+				KeyCode::Down | KeyCode::Char('j') => {
+					self.previous_row();
 				}
+				_ => {}
 			}
-			KeyCode::Enter => {
-				return self.confirm();
-			}
-			_ => {}
+			Signal::Wait
+		} else {
+			self.selected_row = Some(0);
+			self.handle_input(key)
 		}
-		None
 	}
 
 	fn focus(&mut self) {
 		self.focused = true;
-		if self.selected_row == NO_SELECTION && !self.rows.is_empty() {
-			self.selected_row = 0;
+		if self.selected_row.is_none() {
+			self.selected_row = Some(0);
 		}
 	}
 	fn is_focused(&self) -> bool {
 		self.focused
-	}
-
-	fn confirm(&mut self) -> Option<Value> {
-		match self.selected_row {
-			NO_SELECTION => None,
-			idx if idx < self.rows.len() => {
-				let row = &self.rows[idx];
-				let mut map = Map::new();
-				for (i, header) in self.headers.iter().enumerate() {
-					if i < row.len() {
-						map.insert(header.clone(), Value::String(row[i].clone()));
-					} else {
-						map.insert(header.clone(), Value::Null);
-					}
-				}
-				Some(Value::Object(map))
-			}
-			_ => None
-		}
 	}
 
 	fn unfocus(&mut self) {
@@ -961,77 +738,29 @@ impl ConfigWidget for TableWidget {
 		});
 
 		let mut state = TableState::default();
-		if self.selected_row >= self.rows.len() {
+		if self.selected_row.is_some_and(|idx| idx >= self.rows.len()) {
 			state.select(None);
 		} else {
-			state.select(Some(self.selected_row));
+			state.select(self.selected_row);
 		}
+
+		let hl_style = if self.focused {
+			Style::default()
+				.bg(Color::Cyan)
+				.fg(Color::Black)
+				.add_modifier(Modifier::BOLD)
+		} else {
+			Style::default()
+		};
 
 		let table = Table::new(rows, &self.widths)
 			.header(header)
 			.block(Block::default().title(self.title.clone()).borders(Borders::ALL))
 			.widths(&self.widths)
 			.column_spacing(1)
-			.row_highlight_style(
-					Style::default()
-							.bg(Color::Cyan)
-							.fg(Color::Black)
-							.add_modifier(Modifier::BOLD),
-			)
+			.row_highlight_style(hl_style)
 			.highlight_symbol(">> ");
 
 		f.render_stateful_widget(table, area, &mut state);
-	}
-
-	fn to_value(&self) -> Option<Value> {
-		None // StaticTable does not produce a value
-	}
-}
-
-pub struct InfoBox {
-	pub title: String,
-	pub content: String
-}
-
-impl InfoBox {
-	pub fn new(title: impl Into<String>, content: impl Into<String>) -> Self {
-		Self {
-			title: title.into(),
-			content: content.into()
-		}
-	}
-}
-
-impl ConfigWidget for InfoBox {
-	fn handle_input(&mut self, _key: KeyEvent) -> Option<Value> {
-		// InfoBox does not handle input
-		None
-	}
-
-	fn focus(&mut self) {
-		// InfoBox does not need to focus
-	}
-	fn is_focused(&self) -> bool {
-		false
-	}
-
-	fn confirm(&mut self) -> Option<Value> {
-		// InfoBox does not need to confirm
-		None
-	}
-
-	fn unfocus(&mut self) {
-		// InfoBox does not need to unfocus
-	}
-
-	fn render(&self, f: &mut Frame, area: Rect) {
-		let paragraph = Paragraph::new(self.content.clone())
-			.block(Block::default().title(self.title.clone()).borders(Borders::ALL))
-			.wrap(ratatui::widgets::Wrap { trim: true });
-		f.render_widget(paragraph, area);
-	}
-
-	fn to_value(&self) -> Option<Value> {
-		None // InfoBox does not produce a value
 	}
 }

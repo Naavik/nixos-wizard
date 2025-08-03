@@ -3,19 +3,17 @@
 use std::{env, fs::OpenOptions, io, path::PathBuf};
 
 use log::debug;
-use ratatui::{crossterm::{execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}}, prelude::CrosstermBackend, Terminal};
+use ratatui::{crossterm::{execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}}, layout::{Alignment, Constraint, Direction, Layout}, prelude::CrosstermBackend, style::{Color, Modifier, Style}, widgets::Paragraph, Terminal};
 use ratatui::crossterm::event::{self, Event, KeyCode};
 use serde_json::Value;
 use std::time::{Duration, Instant};
 
-use crate::{drive::{DiskPlan, DiskPlanIR}, nix::{fmt_nix, NixSerializer}, widget::ConfigWidget};
-use crate::widget::ConfigMenu;
+use crate::installer::{Installer, Menu, Page, Signal};
 
-
-pub mod page;
+pub mod installer;
 pub mod widget;
+pub mod drives;
 pub mod nix;
-pub mod drive;
 
 #[macro_export]
 macro_rules! attrset {
@@ -104,14 +102,34 @@ fn main() -> anyhow::Result<()> {
 }
 
 pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> anyhow::Result<()> {
-	let mut app = ConfigMenu::new();
+
+	let mut installer = Installer::new();
+	let mut pages: Vec<Box<dyn Page>> = vec![];
+	pages.push(Box::new(Menu::new()));
+
 	let tick_rate = Duration::from_millis(250);
 	let mut last_tick = Instant::now();
 
-	let config: Option<Value> = loop {
+	loop {
 		terminal.draw(|f| {
-			let size = f.area();
-			app.render(f, size);
+			let chunks = Layout::default()
+				.direction(Direction::Vertical)
+				.constraints([
+					Constraint::Length(1),           // Header height
+					Constraint::Min(0),              // Rest of screen
+				])
+				.split(f.area());
+
+			// Draw header
+			let header = Paragraph::new("Install NixOS")
+				.style(Style::default().add_modifier(Modifier::BOLD))
+				.alignment(Alignment::Center);
+			f.render_widget(header, chunks[0]);
+
+			// Draw current page in the remaining area
+			if let Some(page) = pages.last_mut() {
+				page.render(&installer, f, chunks[1]);
+			}
 		})?;
 
 		let timeout = tick_rate
@@ -120,19 +138,46 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 
 		if event::poll(timeout)? {
 			if let Event::Key(key) = event::read()? {
-				match key.code {
-					KeyCode::Char('q') => {
-						if app.titles.is_focused() {
-							break None;
-						} else {
-							app.handle_input(key);
+				debug!("Key event: {key:?}");
+				if let Some(page) = pages.last_mut() {
+					match page.handle_input(&mut installer, key) {
+						Signal::Wait => {
+							// Wait
+						}
+						Signal::Push(new_page) => {
+							pages.push(new_page);
+						}
+						Signal::Pop => {
+							pages.pop();
+						}
+						Signal::PopCount(n) => {
+							for _ in 0..n {
+								if pages.len() > 1 {
+									pages.pop();
+								}
+							}
+						}
+						Signal::Unwind => {
+							while pages.len() > 1 {
+								pages.pop();
+							}
+						}
+						Signal::Quit => {
+							debug!("Quit signal received");
+							return Ok(());
+						}
+						Signal::WriteCfg => {
+							debug!("WriteCfg signal received");
+							// Handle configuration writing here
+						}
+						sig => {
+							// Any other signal is meant to be caught and handled by page widgets
+							unreachable!("Uncaught widget signal: {:?}", sig)
 						}
 					}
-					_ => {
-						if let Some(value) = app.handle_input(key) {
-							break Some(value);
-						}
-					}
+				} else {
+					// No pages, push the initial page
+					pages.push(Box::new(Menu::new()));
 				}
 			}
 		}
@@ -140,16 +185,12 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 		if last_tick.elapsed() >= tick_rate {
 			last_tick = Instant::now();
 		}
-	};
+	}
 
+	/*
 	let _ = disable_raw_mode();
 	execute!(io::stdout(), LeaveAlternateScreen)?;
 
-	if let Some(config) = config {
-		let serializer = NixSerializer::new(config["config"].clone(), PathBuf::from("./."), false);
-		let serialized = serializer.mk_nix_config()?;
-		println!("Generated Nix Configuration:\n\n{serialized}");
-	}
-
 	Ok(())
+	*/
 }
