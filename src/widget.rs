@@ -6,6 +6,7 @@ use crate::installer::Signal;
 pub trait ConfigWidget {
 	fn render(&self, f: &mut Frame, area: Rect);
 	fn handle_input(&mut self, key: KeyEvent) -> Signal;
+	fn interact(&mut self) {}
 	fn focus(&mut self);
 	fn unfocus(&mut self);
 	fn is_focused(&self) -> bool;
@@ -99,6 +100,13 @@ impl WidgetBox {
 			render_borders
 		}
 	}
+	/// Alter the children array in-place, without altering the focus state
+	pub fn set_children_inplace(&mut self, widgets: Vec<Box<dyn ConfigWidget>>) {
+		self.widgets = widgets;
+		if self.focused {
+			self.focus(); // refreshes focus state for children
+		}
+	}
 	pub fn first_child(&mut self) {
 		self.focused_child = Some(0);
 	}
@@ -135,9 +143,16 @@ impl WidgetBox {
 		self.focused_child
 	}
 
-	pub fn button_menu(buttons: Vec<Button>) -> Self {
+	pub fn focused_child_mut(&mut self) -> Option<&mut Box<dyn ConfigWidget>> {
+		if let Some(idx) = self.focused_child {
+			self.widgets.get_mut(idx)
+		} else {
+			None
+		}
+	}
+
+	pub fn button_menu(buttons: Vec<Box<dyn ConfigWidget>>) -> Self {
 		let num_btns = buttons.len();
-		let children: Vec<Box<dyn ConfigWidget>> = buttons.into_iter().map(|btn| Box::new(btn) as Box<dyn ConfigWidget>).collect();
 		let mut constraints = vec![];
 		for _ in 0..num_btns {
 			constraints.push(Constraint::Length(1))
@@ -147,7 +162,7 @@ impl WidgetBox {
 			.constraints(constraints);
 		WidgetBoxBuilder::new()
 			.layout(layout)
-			.children(children)
+			.children(buttons)
 			.build()
 	}
 }
@@ -233,6 +248,86 @@ impl ConfigWidget for WidgetBox {
 	}
 }
 
+pub struct CheckBox {
+	pub label: String,
+	pub checked: bool,
+	pub focused: bool
+}
+
+impl CheckBox {
+	pub fn new(label: impl Into<String>, checked: bool) -> Self {
+		Self {
+			label: label.into(),
+			checked,
+			focused: false
+		}
+	}
+	pub fn toggle(&mut self) {
+		self.checked = !self.checked;
+	}
+	pub fn is_checked(&self) -> bool {
+		self.checked
+	}
+}
+
+impl ConfigWidget for CheckBox {
+	fn handle_input(&mut self, key: KeyEvent) -> Signal {
+		match key.code {
+			KeyCode::Char(' ') | KeyCode::Enter => {
+				self.toggle();
+			}
+			_ => {}
+		}
+		Signal::Wait
+	}
+
+	fn interact(&mut self) {
+		// Implementation of this method is necessary since it is technically stateful,
+		// So we must be able to interact with it through the ConfigWidget interface,
+		// so that the widget remains reactive in the case of use with WidgetBox for instance.
+		self.toggle();
+	}
+
+	fn focus(&mut self) {
+		self.focused = true;
+	}
+
+	fn is_focused(&self) -> bool {
+		self.focused
+	}
+
+	fn unfocus(&mut self) {
+		self.focused = false;
+	}
+
+	fn render(&self, f: &mut Frame, area: Rect) {
+		let style = if self.focused {
+			Style::default()
+				.fg(Color::Black)
+				.bg(Color::Cyan)
+				.add_modifier(Modifier::BOLD)
+		} else {
+			Style::default()
+				.fg(Color::White)
+				.bg(Color::Reset)
+		};
+
+		let checkbox_char = if self.checked { "[x]" } else { "[ ]" };
+		let content = Paragraph::new(Span::styled(
+			format!("{} {}", checkbox_char, self.label),
+			style,
+		))
+		.alignment(Alignment::Center)
+		.block(Block::default().style(style));
+
+		f.render_widget(content, area);
+	}
+
+	fn get_value(&self) -> Option<Value> {
+		Some(Value::Bool(self.checked))
+	}
+}
+
 pub struct Button {
 	pub label: String,
 	pub focused: bool
@@ -296,6 +391,7 @@ pub struct LineEditor {
 	pub placeholder: Option<String>,
 	pub title: String,
 	pub value: String,
+	pub error: Option<String>,
 	pub cursor: usize
 }
 
@@ -308,6 +404,7 @@ impl LineEditor {
 			placeholder,
 			title,
 			value: String::new(),
+			error: None,
 			cursor: 0
 		}
 	}
@@ -318,7 +415,7 @@ impl LineEditor {
 		}
 
 		if self.value.is_empty() {
-			let placeholder = self.placeholder.clone().unwrap_or_else(|| "".to_string());
+			let placeholder = self.placeholder.clone().unwrap_or_default();
 			let span = Span::styled(
 				placeholder,
 				Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
@@ -352,6 +449,11 @@ impl LineEditor {
 	fn as_widget(&self) -> Paragraph {
 		Paragraph::new(self.render_line())
 			.block(Block::default().title(self.title.clone()).borders(Borders::ALL))
+	}
+	pub fn error(&mut self, msg: impl ToString) {
+		self.error = Some(msg.to_string());
+		self.value.clear();
+		self.cursor = 0;
 	}
 }
 
@@ -398,8 +500,25 @@ impl ConfigWidget for LineEditor {
 	}
 
 	fn render(&self, f: &mut Frame, area: Rect) {
+		let chunks = Layout::default()
+			.direction(ratatui::layout::Direction::Vertical)
+			.constraints(
+				vec![
+					Constraint::Min(3),
+					Constraint::Length(3)
+				]
+			)
+			.split(area);
+		if let Some(err) = &self.error {
+			let error_paragraph = Paragraph::new(Span::styled(
+				err.clone(),
+				Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+			))
+			.block(Block::default());
+			f.render_widget(error_paragraph, chunks[1]);
+		}
 		let paragraph = self.as_widget();
-		f.render_widget(paragraph, area);
+		f.render_widget(paragraph, chunks[0]);
 	}
 
 	fn focus(&mut self) {
@@ -534,21 +653,22 @@ impl ConfigWidget for StrList {
 	}
 }
 
-pub struct InfoBox {
+
+pub struct InfoBox<'a> {
 	pub title: String,
-	pub content: String
+	pub content: Vec<Line<'a>>
 }
 
-impl InfoBox {
-	pub fn new(title: impl Into<String>, content: impl Into<String>) -> Self {
+impl<'a> InfoBox<'a> {
+	pub fn new(title: impl Into<String>, content: Vec<Line<'a>>) -> Self {
 		Self {
 			title: title.into(),
-			content: content.into()
+			content
 		}
 	}
 }
 
-impl ConfigWidget for InfoBox {
+impl<'a> ConfigWidget for InfoBox<'a> {
 	fn handle_input(&mut self, _key: KeyEvent) -> Signal {
 		Signal::Wait
 	}

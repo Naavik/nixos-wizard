@@ -3,7 +3,7 @@
 use std::{env, fs::OpenOptions, io, path::PathBuf};
 
 use log::debug;
-use ratatui::{crossterm::{execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}}, layout::{Alignment, Constraint, Direction, Layout}, prelude::CrosstermBackend, style::{Color, Modifier, Style}, widgets::Paragraph, Terminal};
+use ratatui::{crossterm::{execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}}, layout::{Alignment, Constraint, Direction, Layout}, prelude::CrosstermBackend, style::{Color, Modifier, Style}, text::Line, widgets::Paragraph, Terminal};
 use ratatui::crossterm::event::{self, Event, KeyCode};
 use serde_json::Value;
 use std::time::{Duration, Instant};
@@ -15,44 +15,57 @@ pub mod widget;
 pub mod drives;
 pub mod nix;
 
+pub fn styled_block<'a>(lines: Vec<Vec<(Option<(Color,Modifier)>, impl ToString)>>) -> Vec<Line<'a>> {
+	lines.into_iter().map(|line| {
+		let spans = line.into_iter().map(|(style_opt, text)| {
+			let mut span = ratatui::text::Span::raw(text.to_string());
+			if let Some((color, modifier)) = style_opt {
+				span.style = Style::default().fg(color).add_modifier(modifier);
+			}
+			span
+		}).collect::<Vec<_>>();
+		Line::from(spans)
+	}).collect()
+}
+
 #[macro_export]
 macro_rules! attrset {
-    {$($key:tt = $val:expr);+ ;} => {{
-			let mut parts = vec![];
-			$(
-				parts.push(format!("{} = {};", stringify!($key).trim_matches('"'), $val));
-			)*
-			format!("{{ {} }}", parts.join(" "))
-		}};
+	{$($key:tt = $val:expr);+ ;} => {{
+		let mut parts = vec![];
+		$(
+			parts.push(format!("{} = {};", stringify!($key).trim_matches('"'), $val));
+		)*
+		format!("{{ {} }}", parts.join(" "))
+  }};
 }
 
 #[macro_export]
 macro_rules! merge_attrs {
-    ($($set:expr),* $(,)?) => {{
-			let mut merged = String::new();
-			$(
-				if !$set.starts_with('{') || !$set.ends_with('}') {
-					panic!("attrset must be a valid attribute set");
-				}
-				let inner = $set
-					.strip_prefix('{')
-					.and_then(|s| s.strip_suffix('}'))
-					.unwrap_or("")
-					.trim();
-				merged.push_str(inner);
-			)*
+	($($set:expr),* $(,)?) => {{
+		let mut merged = String::new();
+		$(
+			if !$set.starts_with('{') || !$set.ends_with('}') {
+				panic!("attrset must be a valid attribute set");
+			}
+			let inner = $set
+			.strip_prefix('{')
+			.and_then(|s| s.strip_suffix('}'))
+			.unwrap_or("")
+			.trim();
+			merged.push_str(inner);
+		)*
 			format!("{{ {merged} }}")
-		}};
+	}};
 }
 
 #[macro_export]
 macro_rules! list {
-    ($($item:expr),* $(,)?) => {
-        {
-            let items = vec![$(format!("{}", $item)),*];
-            format!("[{}]", items.join(" "))
-        }
-    };
+	($($item:expr),* $(,)?) => {
+		{
+			let items = vec![$(format!("{}", $item)),*];
+			format!("[{}]", items.join(" "))
+		}
+	};
 }
 
 struct RawModeGuard;
@@ -104,8 +117,8 @@ fn main() -> anyhow::Result<()> {
 pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> anyhow::Result<()> {
 
 	let mut installer = Installer::new();
-	let mut pages: Vec<Box<dyn Page>> = vec![];
-	pages.push(Box::new(Menu::new()));
+	let mut page_stack: Vec<Box<dyn Page>> = vec![];
+	page_stack.push(Box::new(Menu::new()));
 
 	let tick_rate = Duration::from_millis(250);
 	let mut last_tick = Instant::now();
@@ -127,8 +140,8 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 			f.render_widget(header, chunks[0]);
 
 			// Draw current page in the remaining area
-			if let Some(page) = pages.last_mut() {
-				page.render(&installer, f, chunks[1]);
+			if let Some(page) = page_stack.last_mut() {
+				page.render(&mut installer, f, chunks[1]);
 			}
 		})?;
 
@@ -138,28 +151,28 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 
 		if event::poll(timeout)? {
 			if let Event::Key(key) = event::read()? {
-				debug!("Key event: {key:?}");
-				if let Some(page) = pages.last_mut() {
+				if let Some(page) = page_stack.last_mut() {
 					match page.handle_input(&mut installer, key) {
 						Signal::Wait => {
-							// Wait
+							// Do nothing
 						}
 						Signal::Push(new_page) => {
-							pages.push(new_page);
+							page_stack.push(new_page);
 						}
 						Signal::Pop => {
-							pages.pop();
+							page_stack.pop();
 						}
 						Signal::PopCount(n) => {
 							for _ in 0..n {
-								if pages.len() > 1 {
-									pages.pop();
+								if page_stack.len() > 1 {
+									page_stack.pop();
 								}
 							}
 						}
 						Signal::Unwind => {
-							while pages.len() > 1 {
-								pages.pop();
+							// Used to return to the main menu
+							while page_stack.len() > 1 {
+								page_stack.pop();
 							}
 						}
 						Signal::Quit => {
@@ -170,14 +183,10 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 							debug!("WriteCfg signal received");
 							// Handle configuration writing here
 						}
-						sig => {
-							// Any other signal is meant to be caught and handled by page widgets
-							unreachable!("Uncaught widget signal: {:?}", sig)
-						}
 					}
 				} else {
 					// No pages, push the initial page
-					pages.push(Box::new(Menu::new()));
+					page_stack.push(Box::new(Menu::new()));
 				}
 			}
 		}
@@ -188,9 +197,9 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 	}
 
 	/*
-	let _ = disable_raw_mode();
-	execute!(io::stdout(), LeaveAlternateScreen)?;
+		 let _ = disable_raw_mode();
+		 execute!(io::stdout(), LeaveAlternateScreen)?;
 
-	Ok(())
-	*/
+		 Ok(())
+		 */
 }
