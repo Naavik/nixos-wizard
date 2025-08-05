@@ -4,20 +4,23 @@ use indoc::indoc;
 use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Constraint, Direction, Layout, Rect}, style::{Color, Modifier}, Frame};
 use serde_json::Value;
 
-use crate::{drives::{get_entry_id, DiskEntry, DiskPlan, DiskPlanBuilder, DiskSize, DiskTable, DiskTableHeader, EntryType, PartStatus}, styled_block, widget::{Button, CheckBox, ConfigWidget, InfoBox, LineEditor, StrList, TableWidget, WidgetBox, WidgetBoxBuilder}};
+use crate::{drives::{bytes_readable, disk_table, get_entry_id, lsblk, parse_sectors, part_table, Disk, DiskItem, DiskTableHeader, PartStatus, Partition}, styled_block, widget::{Button, CheckBox, ConfigWidget, InfoBox, LineEditor, StrList, TableWidget, WidgetBox, WidgetBoxBuilder}};
 
+const HIGHLIGHT: Option<(Color,Modifier)> = Some((Color::Yellow, Modifier::BOLD));
 
 
 #[derive(Default)]
 pub struct Installer {
 
-	pub selected_drive_info: Option<DiskEntry>,
-	pub drive_config_builder: DiskPlanBuilder,
+	pub drives: Vec<Disk>,
+	pub selected_drive: Option<usize>, // drive index
+	pub selected_partition: Option<u64>, // partition id
+
+	pub drive_config: Option<Disk>,
 	pub use_auto_drive_config: bool,
-	pub drive_config: Option<DiskPlan>,
 
 
-	pub drive_config_display: Option<TableWidget>,
+	pub drive_config_display: Option<Vec<DiskItem>>,
 
 	/// Used as an escape hatch for inter-page communication
 	/// If you can't find a good way to pass a value from one page to another
@@ -30,12 +33,11 @@ impl Installer {
 		Self::default()
 	}
 	pub fn make_drive_config_display(&mut self) {
-		let Some(drive_config) = &self.drive_config else {
+		let Some(drive) = &self.drive_config else {
 			self.drive_config_display = None;
 			return;
 		};
-		let table = drive_config.as_table().ok();
-		self.drive_config_display = table
+		self.drive_config_display = Some(drive.layout().to_vec())
 	}
 }
 
@@ -47,6 +49,7 @@ pub enum Signal {
 	Quit,
 	WriteCfg,
 	Unwind, // Pop until we get back to the menu
+	Error(anyhow::Error), // Used for error handling, like when a drive is not selected
 }
 
 impl Debug for Signal {
@@ -59,6 +62,7 @@ impl Debug for Signal {
 			Self::Quit => write!(f, "Signal::Quit"),
 			Self::WriteCfg => write!(f, "Signal::WriteCfg"),
 			Self::Unwind => write!(f, "Signal::Unwind"),
+			Self::Error(err) => write!(f, "Signal::Error({})", err),
 		}
 	}
 }
@@ -179,8 +183,8 @@ impl Menu {
 					vec![(None, "This can be "), (Some((Color::Reset, Modifier::ITALIC)), "any valid path"), (None, " to a flake output that produces a "), (Some((Color::Cyan, Modifier::BOLD)), "'nixosConfiguration'")],
 					vec![(None, " attribute.")],
 					vec![(None, "Examples include:")],
-					vec![(None, " - A local flake: "), (Some((Color::Yellow, Modifier::BOLD)), "'/path/to/flake#my-host'")],
-					vec![(None, " - A GitHub flake: "), (Some((Color::Yellow, Modifier::BOLD)), "'github:user/repo#my-host'")],
+					vec![(None, " - A local flake: "), (HIGHLIGHT, "'/path/to/flake#my-host'")],
+					vec![(None, " - A GitHub flake: "), (HIGHLIGHT, "'github:user/repo#my-host'")],
 					vec![(None, "")],
 					vec![(Some((Color::DarkGray,Modifier::ITALIC)), "Don't forget to double check your config's hardware configuration :)")]
 				])
@@ -211,7 +215,10 @@ impl Menu {
 				])
 			),
 			5 => {
-				display_widget = installer.drive_config_display.as_ref().map(|w| Box::new(w.clone()) as Box<dyn ConfigWidget>);
+				let sector_size = installer.drive_config.as_ref().map(|d| d.sector_size()).unwrap_or(512);
+				display_widget = installer.drive_config_display.as_ref()
+					.map(|d| d.as_slice())
+					.map(|d| Box::new(part_table(d, sector_size)) as Box<dyn ConfigWidget>);
 				(
 					"Drives",
 					styled_block(vec![
@@ -474,8 +481,8 @@ impl<'a> Drives<'a> {
 			"Drive Configuration",
 			styled_block(vec![
 				vec![(None, "Select how you would like to configure your drives for the NixOS installation.")],
-				vec![(None, "- "), (Some((Color::Green, Modifier::BOLD)), "'Use a best-effort default partition layout'"), (None, " will attempt to automatically partition and format your selected drive(s) with sensible defaults. "), (None, "This is recommended for most users.")],
-				vec![(None, "- "), (Some((Color::Green, Modifier::BOLD)), "'Configure partitions manually'"), (None, " will allow you to specify exactly how your drives should be partitioned and formatted. "), (None, "This is recommended for advanced users who have specific requirements.")],
+				vec![(None, "- "), (Some((Color::Green, Modifier::BOLD)), "'Use a best-effort default partition layout'"), (None, " will attempt to automatically partition and format your selected drive with sensible defaults. "), (None, "This is recommended for most users.")],
+				vec![(None, "- "), (Some((Color::Green, Modifier::BOLD)), "'Configure partitions manually'"), (None, " will allow you to specify exactly how your drive should be partitioned and formatted. "), (None, "This is recommended for advanced users who have specific requirements.")],
 				vec![(Some((Color::Red, Modifier::BOLD)), "NOTE: "), (None, "When the installer is run, "), (Some((Color::Red, Modifier::BOLD | Modifier::ITALIC)), " any and all"), (None, " data on the selected drive will be wiped. Make sure you've backed up any important data.")],
 			])
 		);
@@ -522,14 +529,20 @@ impl<'a> Page for Drives<'a> {
 				let Some(idx) = self.buttons.selected_child() else {
 					return Signal::Wait;
 				};
+				let disks = match lsblk() {
+					Ok(disks) => disks,
+					Err(e) => return Signal::Error(anyhow::anyhow!("Failed to list block devices: {e}"))
+				};
+				let table = disk_table(&disks);
+				installer.drives = disks;
 				match idx {
 					0 => {
 						installer.use_auto_drive_config = true;
-						Signal::Push(Box::new(SelectDrive::new()))
+						Signal::Push(Box::new(SelectDrive::new(table)))
 					}
 					1 => {
 						installer.use_auto_drive_config = false;
-						Signal::Push(Box::new(SelectDrive::new()))
+						Signal::Push(Box::new(SelectDrive::new(table)))
 					}
 					2 => Signal::Pop,
 					_ => Signal::Wait,
@@ -541,64 +554,47 @@ impl<'a> Page for Drives<'a> {
 }
 
 pub struct SelectDrive {
-	drives: TableWidget
+	table: TableWidget
 }
 
 impl SelectDrive {
-	pub fn new() -> Self {
-		let mut rows = DiskTable::from_lsblk().unwrap();
-		rows = rows.filter_by(|row| row.parent == None);
-		let mut drives = rows.as_widget(Some(DiskTableHeader::all_headers()));
-		drives.focus();
-		Self { drives }
+	pub fn new(mut table: TableWidget) -> Self {
+		table.focus();
+		Self { table }
 	}
-}
-
-impl Default for SelectDrive {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl Page for SelectDrive {
 	fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-		self.drives.render(f, area);
+		self.table.render(f, area);
 	}
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
 			KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
 			KeyCode::Up | KeyCode::Char('k') => {
-				self.drives.previous_row();
+				self.table.previous_row();
 				Signal::Wait
 			}
 			KeyCode::Down | KeyCode::Char('j') => {
-				self.drives.next_row();
+				self.table.next_row();
 				Signal::Wait
 			}
 			KeyCode::Enter => {
-				if let Some(row) = self.drives.selected_row() {
-					let Some(row) = self.drives.get_row(row) else {
-						return Signal::Wait;
-					};
-					let dev_id = row.fields.last().and_then(|f| f.parse::<u64>().ok());
-					let Some(id) = dev_id else {
-						log::error!("Failed to find drive info'");
-						return Signal::Wait;
+				if let Some(row) = self.table.selected_row() {
+					let Some(disk) = installer.drives.get(row) else {
+						return Signal::Error(anyhow::anyhow!("Failed to find drive info'"));
 					};
 
-					let drive_info = DiskTable::from_lsblk().unwrap();
-					let parent = drive_info.filter_by(|d| d.id == id).entries().first().cloned().unwrap();
-
-					installer.selected_drive_info = Some(parent.clone());
-					installer.drive_config_builder.set_device(parent.clone());
-					let children = DiskTable::from_lsblk().unwrap()
-						.filter_by(|d| d.parent.as_deref() == Some(&parent.device));
-					installer.drive_config_builder.set_layout(children.entries().to_vec());
-
+					installer.drive_config = Some(disk.clone());
+					installer.selected_drive = Some(row);
 					if installer.use_auto_drive_config {
-						Signal::Push(Box::new(SelectFilesystem::new(id)))
+						Signal::Push(Box::new(SelectFilesystem::new(None)))
 					} else {
-						Signal::Push(Box::new(ManualPartition::new()))
+						let Some(ref drive) = installer.drive_config else {
+							return Signal::Error(anyhow::anyhow!("No drive config available"));
+						};
+						let table = part_table(drive.layout(), drive.sector_size());
+						Signal::Push(Box::new(ManualPartition::new(table)))
 					}
 				} else {
 					Signal::Wait
@@ -611,11 +607,11 @@ impl Page for SelectDrive {
 
 pub struct SelectFilesystem {
 	pub buttons: WidgetBox,
-	pub dev_id: u64,
+	pub dev_id: Option<u64>,
 }
 
 impl SelectFilesystem {
-	pub fn new(dev_id: u64) -> Self {
+	pub fn new(dev_id: Option<u64>) -> Self {
 		let buttons = vec![
 			Box::new(Button::new("ext4")) as Box<dyn ConfigWidget>,
 			Box::new(Button::new("ext3")) as Box<dyn ConfigWidget>,
@@ -638,20 +634,24 @@ impl SelectFilesystem {
 				"ext4",
 				styled_block(vec![
 					vec![
-						(Some((Color::Yellow, Modifier::BOLD)), "ext4"),
+						(HIGHLIGHT, "ext4"),
 						(None, " is a"),
-						(Some((Color::Yellow, Modifier::BOLD)), " widely used and stable filesystem"),
+						(HIGHLIGHT, " widely used and stable filesystem"),
 						(None, " known for its "),
-						(Some((Color::Yellow, Modifier::BOLD)), "reliability and performance.")
+						(HIGHLIGHT, "reliability and performance.")
 					],
 					vec![
-						(None, "It supports journaling, which helps protect against data corruption in case of crashes.")
+						(None, "It supports "),
+						(HIGHLIGHT, "journaling"),
+						(None, ", which helps "),
+						(HIGHLIGHT, "protect against data corruption "),
+						(None, "in case of crashes.")
 					],
 					vec![
 						(None, "It's a good choice for"),
-						(Some((Color::Yellow,Modifier::BOLD)), " general-purpose"),
+						(HIGHLIGHT, " general-purpose"),
 						(None, " use and is"),
-						(Some((Color::Yellow,Modifier::BOLD)), " well-supported across various Linux distributions.")
+						(HIGHLIGHT, " well-supported across various Linux distributions.")
 					],
 				])
 			),
@@ -659,16 +659,18 @@ impl SelectFilesystem {
 				"ext3",
 				styled_block(vec![
 					vec![
-						(Some((Color::Yellow, Modifier::BOLD)), "ext3"),
+						(HIGHLIGHT, "ext3"),
 						(None, " is an older journaling filesystem that builds upon ext2."),
 					],
 					vec![
 						(None, "It provides "),
-						(Some((Color::Yellow, Modifier::BOLD)), "journaling"),
+						(HIGHLIGHT, "journaling"),
 						(None, " capabilities to improve data integrity and recovery after crashes."),
 					],
 					vec![
-						(None, "While it is reliable and stable, it lacks some of the performance and features of ext4."),
+						(None, "While it is "),
+						(HIGHLIGHT, "reliable and stable"),
+						(None, ", it lacks some of the performance and features of ext4."),
 					],
 				])
 			),
@@ -676,18 +678,22 @@ impl SelectFilesystem {
 				"ext2",
 				styled_block(vec![
 					vec![
-						(Some((Color::Yellow, Modifier::BOLD)), "ext2"),
+						(HIGHLIGHT, "ext2"),
 						(None, " is a non-journaling filesystem that is simple and efficient."),
 					],
 					vec![
-						(None, "It is suitable for use cases where journaling is not required, such as "),
-						(Some((Color::Yellow, Modifier::BOLD)), "flash drives"),
+						(None, "It is suitable for use cases where "),
+						(HIGHLIGHT, "journaling is not required"),
+						(None, ", such as "),
+						(HIGHLIGHT, "flash drives"),
 						(None, " or "),
-						(Some((Color::Yellow, Modifier::BOLD)), "small partitions"),
+						(HIGHLIGHT, "small partitions"),
 						(None, "."),
 					],
 					vec![
-						(None, "However, it is more prone to data corruption in case of crashes compared to ext3 and ext4."),
+						(None, "However, it is more "),
+						(HIGHLIGHT, "prone to data corruption "),
+						(None, "in case of crashes compared to ext3 and ext4."),
 					],
 				])
 			),
@@ -695,31 +701,32 @@ impl SelectFilesystem {
 				"btrfs",
 				styled_block(vec![
 					vec![
-						(Some((Color::Yellow, Modifier::BOLD)), "btrfs"),
+						(HIGHLIGHT, "btrfs"),
 						(None, " ("),
 						(Some((Color::Reset, Modifier::ITALIC)), "B-tree filesystem"),
 						(None, ") is a "),
-						(Some((Color::Yellow, Modifier::BOLD)), "modern filesystem"),
+						(HIGHLIGHT, "modern filesystem"),
 						(None, " that offers advanced features like "),
-						(Some((Color::Yellow, Modifier::BOLD)), "snapshots"),
+						(HIGHLIGHT, "snapshots"),
 						(None, ", "),
-						(Some((Color::Yellow, Modifier::BOLD)), "subvolumes"),
+						(HIGHLIGHT, "subvolumes"),
 						(None, ", and "),
-						(Some((Color::Yellow, Modifier::BOLD)), "built-in RAID support"),
+						(HIGHLIGHT, "built-in RAID support"),
 						(None, "."),
 					],
 					vec![
 						(None, "It is designed for "),
-						(Some((Color::Yellow, Modifier::BOLD)), "scalability"),
+						(HIGHLIGHT, "scalability"),
 						(None, " and "),
-						(Some((Color::Yellow, Modifier::BOLD)), "flexibility"),
-						(None, ", making it suitable for systems that require complex storage solutions."),
+						(HIGHLIGHT, "flexibility"),
+						(None, ", making it suitable for systems that require "),
+						(HIGHLIGHT, "complex storage solutions."),
 					],
 					vec![
 						(None, "However, it may not be as mature as "),
-						(Some((Color::Yellow, Modifier::BOLD)), "ext4"),
+						(HIGHLIGHT, "ext4"),
 						(None, " in terms of "),
-						(Some((Color::Yellow, Modifier::BOLD)), "stability"),
+						(HIGHLIGHT, "stability"),
 						(None, " for all use cases."),
 					],
 				])
@@ -728,28 +735,28 @@ impl SelectFilesystem {
 				"xfs",
 				styled_block(vec![
 					vec![
-						(Some((Color::Yellow, Modifier::BOLD)), "XFS"),
+						(HIGHLIGHT, "XFS"),
 						(None, " is a "),
-						(Some((Color::Yellow, Modifier::BOLD)), "high-performance journaling filesystem"),
+						(HIGHLIGHT, "high-performance journaling filesystem"),
 						(None, " that excels in handling "),
-						(Some((Color::Yellow, Modifier::BOLD)), "large files"),
+						(HIGHLIGHT, "large files"),
 						(None, " and "),
-						(Some((Color::Yellow, Modifier::BOLD)), "high I/O workloads"),
+						(HIGHLIGHT, "high I/O workloads"),
 						(None, "."),
 					],
 					vec![
 						(None, "It is known for its "),
-						(Some((Color::Yellow, Modifier::BOLD)), "scalability"),
+						(HIGHLIGHT, "scalability"),
 						(None, " and "),
-						(Some((Color::Yellow, Modifier::BOLD)), "robustness"),
+						(HIGHLIGHT, "robustness"),
 						(None, ", making it a popular choice for "),
-						(Some((Color::Yellow, Modifier::BOLD)), "enterprise environments"),
+						(HIGHLIGHT, "enterprise environments"),
 						(None, "."),
 					],
 					vec![
-						(Some((Color::Yellow, Modifier::BOLD)), "XFS"),
+						(HIGHLIGHT, "XFS"),
 						(None, " is particularly well-suited for systems that require efficient handling of "),
-						(Some((Color::Yellow, Modifier::BOLD)), "large datasets"),
+						(HIGHLIGHT, "large datasets"),
 						(None, "."),
 					],
 				])
@@ -758,13 +765,23 @@ impl SelectFilesystem {
 				"fat12",
 				styled_block(vec![
 					vec![
-						(Some((Color::Yellow, Modifier::BOLD)), "FAT12"),
-						(None, " is a simple and widely supported filesystem primarily used for "),
-						(Some((Color::Yellow, Modifier::BOLD)), "small storage devices"),
+						(HIGHLIGHT, "FAT12"),
+						(None, " is a "),
+						(HIGHLIGHT, "simple "),
+						(None, "and "),
+						(HIGHLIGHT, "widely supported "),
+						(None, "filesystem primarily used for "),
+						(HIGHLIGHT, "small storage devices"),
 						(None, " like floppy disks."),
 					],
 					vec![
-						(None, "It has limitations in terms of maximum partition size and file size, making it less suitable for modern systems."),
+						(None, "It has "),
+						(HIGHLIGHT, "limitations "),
+						(None, "in terms of "),
+						(HIGHLIGHT, "maximum partition size "),
+						(None, "and file size, making it "),
+						(HIGHLIGHT, "less suitable for modern systems"),
+						(None, "."),
 					],
 				])
 			),
@@ -772,11 +789,19 @@ impl SelectFilesystem {
 				"fat16",
 				styled_block(vec![
 					vec![
-						(Some((Color::Yellow, Modifier::BOLD)), "FAT16"),
-						(None, " is an older filesystem that extends FAT12 to support larger partitions and files."),
+						(HIGHLIGHT, "FAT16"),
+						(None, " is an older filesystem that "),
+						(HIGHLIGHT, "extends FAT12"),
+						(None, " to support "),
+						(HIGHLIGHT, "larger partitions and files."),
 					],
 					vec![
-						(None, "It is still used in some embedded systems and older devices but has limitations compared to more modern filesystems."),
+						(None, "It is still used in some "),
+						(HIGHLIGHT, "embedded systems "),
+						(None, "and "),
+						(HIGHLIGHT, "older devices "),
+						(None, "but has "),
+						(HIGHLIGHT, "limitations compared to more modern filesystems"), (None, "."),
 					],
 				])
 			),
@@ -784,21 +809,25 @@ impl SelectFilesystem {
 				"fat32",
 				styled_block(vec![
 					vec![
-					(Some((Color::Yellow, Modifier::BOLD)), "FAT32"),
-					(None, " is a widely supported filesystem that can handle larger partitions and files than FAT16."),
+					(HIGHLIGHT, "FAT32"),
+					(None, " is a widely supported filesystem that can handle"),
+					(HIGHLIGHT, " larger partitions and files than FAT16"), (None, "."),
 					],
 					vec![
 					(None, "It is commonly used for USB drives and memory cards due to its broad "),
-					(Some((Color::Yellow, Modifier::BOLD)), "cross-platform compatibility"),
+					(HIGHLIGHT, "cross-platform compatibility"),
 					(None, "."),
 					],
 					vec![
 					(None, "FAT32 is also commonly used for "),
-					(Some((Color::Yellow, Modifier::BOLD)), "EFI System Partitions (ESP)"),
+					(HIGHLIGHT, "EFI System Partitions (ESP)"),
 					(None, " on UEFI systems, allowing the firmware to load the bootloader."),
 					],
 					vec![
-					(None, "However, it has limitations such as a maximum file size of 4GB and lack of modern journaling features."),
+					(None, "However, it has limitations such as a "),
+					(HIGHLIGHT, "maximum file size of 4GB"),
+					(None, " and"),
+					(HIGHLIGHT, " lack of modern journaling features."),
 					],
 				])
 			),
@@ -806,19 +835,37 @@ impl SelectFilesystem {
 				"ntfs",
 				styled_block(vec![
 					vec![
-						(Some((Color::Yellow, Modifier::BOLD)), "NTFS"),
-						(None, " is a robust and feature-rich filesystem developed by Microsoft."),
+						(HIGHLIGHT, "NTFS"),
+						(None, " is a"),
+						(HIGHLIGHT, " robust"),
+						(None, " and"),
+						(HIGHLIGHT, " feature-rich"),
+						(None, " filesystem developed by Microsoft."),
 					],
 					vec![
-						(None, "It supports large files, advanced permissions, encryption, and journaling."),
+						(None, "It supports "),
+						(HIGHLIGHT, "large files"),
+						(None, ", "),
+						(HIGHLIGHT, "advanced permissions"),
+						(None, ", "),
+						(HIGHLIGHT, "encryption"),
+						(None, ", and "),
+						(HIGHLIGHT, "journaling"),
+						(None, "."),
 					],
 					vec![
-						(None, "While it is primarily used in Windows environments, Linux has good support for NTFS through the "),
-						(Some((Color::Yellow, Modifier::BOLD)), "ntfs-3g"),
+						(None, "While it is"),
+						(HIGHLIGHT, " primarily used in Windows environments"),
+						(None, ", Linux has good support for NTFS through the "),
+						(HIGHLIGHT, "ntfs-3g"),
 						(None, " driver."),
 					],
 					vec![
-						(None, "NTFS is a good choice if you need to share data between Windows and Linux systems or if you require features like file compression and encryption."),
+						(None, "NTFS is a good choice if you need to "),
+						(HIGHLIGHT, "share data between Windows and Linux systems "),
+						(None, "or if you require features like "),
+						(HIGHLIGHT, "file compression and encryption"),
+						(None, "."),
 					],
 				])
 			),
@@ -895,27 +942,25 @@ impl Page for SelectFilesystem {
 				}.to_string();
 
 				if installer.use_auto_drive_config {
-					installer.drive_config_builder.set_part_table("gpt");
-					installer.drive_config_builder.set_fs(&fs);
-					let Ok(config_ir) = installer.drive_config_builder.clone().build_default() else {
-						log::error!("Failed to build auto drive config");
-						return Signal::Pop;
-					};
-					installer.drive_config = Some(config_ir);
-					installer.make_drive_config_display();
-				} else {
-					let drive_info = installer.drive_config_builder.find_by_id(self.dev_id);
-					if drive_info.is_some() {
-						installer.drive_config_builder.set_part_fs_type(self.dev_id, &fs);
-						return Signal::PopCount(2)
-					} else {
-						log::error!("Failed to find drive info for id {}", self.dev_id);
-						return Signal::PopCount(2);
+					if let Some(config) = installer.drive_config.as_mut() {
+						config.use_default_layout();
 					}
+					installer.make_drive_config_display();
+					return Signal::PopCount(3);
+				} else {
+					let Some(config) = installer.drive_config.as_mut() else {
+						return Signal::Error(anyhow::anyhow!("No drive config available"));
+					};
+					let Some(id) = self.dev_id else {
+						return Signal::Error(anyhow::anyhow!("No device id specified for filesystem selection"));
+					};
+					let Some(partition) = config.partition_by_id_mut(id) else {
+						return Signal::Error(anyhow::anyhow!("No partition found with id {:?}", id));
+					};
+					partition.set_fs_type(&fs);
 				}
 
-
-				Signal::Unwind
+				Signal::PopCount(2)
 			}
 			_ => Signal::Wait,
 		}
@@ -929,8 +974,7 @@ pub struct ManualPartition {
 }
 
 impl ManualPartition {
-	pub fn new() -> Self {
-		let mut disk_config = DiskTable::empty().as_widget(Some(DiskTableHeader::all_headers()));
+	pub fn new(mut disk_config: TableWidget) -> Self {
 		let buttons = vec![
 			Box::new(Button::new("Suggest Partition Layout")) as Box<dyn ConfigWidget>,
 			Box::new(Button::new("Confirm and Exit")) as Box<dyn ConfigWidget>,
@@ -943,15 +987,13 @@ impl ManualPartition {
 	}
 }
 
-impl Default for ManualPartition {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Page for ManualPartition {
 	fn render(&mut self, installer: &mut Installer, f: &mut Frame, area: Rect) {
-		let rows = installer.drive_config_builder.manual_config_table().unwrap().rows();
+		let Some(ref config) = installer.drive_config else {
+			log::error!("No drive config available for manual partitioning");
+			return;
+		};
+		let rows = part_table(config.layout(), config.sector_size()).rows().to_vec();
 		self.disk_config.set_rows(rows);
 		let len = self.disk_config.len();
 		let table_constraint = 20 + (5u16 * len as u16);
@@ -1015,39 +1057,29 @@ impl Page for ManualPartition {
 				}
 				KeyCode::Enter => {
 					log::debug!("Disk config is focused, handling row selection");
+					// we have now selected a row in the table
+					// now we need to figure out if we are editing a partition or creating one
 					let Some(row) = self.disk_config.get_selected_row_info() else {
-						return Signal::Wait;
+						return Signal::Error(anyhow::anyhow!("No row selected in disk config table"));
 					};
-					let dev_id = row.fields.last().and_then(|id| id.parse::<u64>().ok());
-					let status = row.get_field("status");
-					let kind = row.get_field("type");
-					let flags = row.get_field("flags").unwrap().split(',').map(|s| s.trim().to_string()).collect::<Vec<_>>();
-					if let Some(dev_id) = dev_id {
-						if let Some(status) = status {
-							if status == "create" && kind == Some(&"free".to_string()) {
-								let fs_entry = installer.drive_config_builder.find_by_id(dev_id);
-								if let Some(entry) = fs_entry {
-									let DiskSize::Literal(sector_size) = entry.sector_size.unwrap_or(DiskSize::Literal(512)) else { unreachable!() };
-									Signal::Push(Box::new(NewPartition::new(entry.start as u64, sector_size, entry.size, Some(entry.id))))
-								} else {
-									// Safe to assume that we are working with a device that has no partitions
-									let Some(ref dev_info) = installer.selected_drive_info else {
-										log::error!("No selected drive info available");
-										return Signal::Wait;
-									};
-									let start = 2048u64; // Default start sector for new partitions
-									let sector_size = dev_info.sector_size.unwrap_or(DiskSize::Literal(512));
-									let size = dev_info.size;
-									Signal::Push(Box::new(NewPartition::new(start, sector_size.as_bytes(DiskSize::Literal(u64::MAX)), size, None)))
-								}
-							} else {
-								Signal::Push(Box::new(AlterPartition::new(dev_id, status.clone(), flags.clone())))
-							}
-						} else {
-							Signal::Wait
+					let Some(start) = row.get_field("start").and_then(|s| s.parse::<u64>().ok()) else {
+						return Signal::Error(anyhow::anyhow!("Failed to parse start sector from row: {:?}", row));
+					};
+					let Some(ref drive) = installer.drive_config else {
+						return Signal::Error(anyhow::anyhow!("No drive config available"));
+					};
+					let layout = drive.layout();
+					let Some(item) = layout.iter().rfind(|i| i.start() == start) else {
+						return Signal::Error(anyhow::anyhow!("No partition or free space found at start sector {}", start));
+					};
+					log::debug!("Selected item: {:?}", item);
+					match item {
+						DiskItem::Partition(part) => {
+							Signal::Push(Box::new(AlterPartition::new(part.clone())))
 						}
-					} else {
-						Signal::Wait
+						DiskItem::FreeSpace { id, start, size } => {
+							Signal::Push(Box::new(NewPartition::new(*id, *start, drive.sector_size(), *size)))
+						}
 					}
 				}
 				_ => Signal::Wait,
@@ -1082,17 +1114,8 @@ impl Page for ManualPartition {
 						}
 						1 => {
 							// Confirm and Exit
-							if let Some(device) = installer.selected_drive_info.clone() {
-								installer.drive_config_builder.set_device(device);
-								let Ok(config_ir) = installer.drive_config_builder.clone().build_manual() else {
-									log::error!("Failed to build manual drive config");
-									return Signal::Wait;
-								};
-								installer.drive_config = Some(config_ir);
-								installer.make_drive_config_display();
-								return Signal::Unwind;
-							}
-							Signal::Wait
+							installer.make_drive_config_display();
+							return Signal::Unwind;
 						}
 						2 => {
 							if !self.confirming_reset {
@@ -1106,20 +1129,10 @@ impl Page for ManualPartition {
 								self.buttons.set_children_inplace(new_buttons);
 								Signal::Wait
 							} else {
-								let Some(ref device) = installer.selected_drive_info else {
+								let Some(ref mut device) = installer.drive_config else {
 									return Signal::Wait;
 								};
-								let device = device.device.clone();
-								let drive_info = DiskTable::from_lsblk().unwrap();
-								let Some(drive_info) = drive_info.clone().find_by(|d| d.device == device) else {
-									log::error!("Failed to find drive info for device '{device}'");
-									return Signal::Wait;
-								};
-								installer.selected_drive_info = Some(drive_info.clone());
-								installer.drive_config_builder.set_device(drive_info.clone());
-								let children = DiskTable::from_lsblk().unwrap()
-									.filter_by(|d| d.parent.as_deref() == Some(&drive_info.device));
-								installer.drive_config_builder.set_layout(children.entries().to_vec());
+								device.reset_layout();
 								self.buttons.unfocus();
 								self.disk_config.first_row();
 								self.disk_config.focus();
@@ -1190,14 +1203,14 @@ impl Page for SuggestPartition {
 			styled_block(vec![
 				vec![
 					(None, "Would you like to use a "),
-					(Some((Color::Yellow,Modifier::BOLD)), "suggested partition layout "),
+					(HIGHLIGHT, "suggested partition layout "),
 					(None, "for your selected drive?")
 				],
 				vec![
 					(None, "This will create a standard layout with a "),
-					(Some((Color::Yellow,Modifier::BOLD)), "boot partition "),
+					(HIGHLIGHT, "boot partition "),
 					(None, "and a "),
-					(Some((Color::Yellow,Modifier::BOLD)), "root partition."),
+					(HIGHLIGHT, "root partition."),
 				],
 				vec![
 					(None, "Any existing manual configuration will be overwritten, and when the installer is run, "),
@@ -1228,8 +1241,11 @@ impl Page for SuggestPartition {
 				match idx {
 					0 => {
 						// Yes
-						let fs = installer.drive_config_builder.fs.clone().unwrap_or_else(|| "ext4".to_string());
-						installer.drive_config_builder.set_default_layout(fs);
+						if let Some(ref mut config) = installer.drive_config {
+							config.use_default_layout();
+						} else {
+							return Signal::Error(anyhow::anyhow!("No drive config available for suggested partition layout"));
+						}
 						Signal::Pop
 					}
 					1 => {
@@ -1245,13 +1261,13 @@ impl Page for SuggestPartition {
 }
 
 pub struct NewPartition {
-	pub free_space_id: Option<u64>,
+	pub fs_id: u64,
 	pub part_start: u64,
 	pub part_end: u64,
 	pub sector_size: u64,
-	pub total_size: DiskSize,
+	pub total_size: u64, // sectors
 
-	pub new_part_size: Option<DiskSize>,
+	pub new_part_size: Option<u64>, // sectors
 	pub size_input: LineEditor,
 
 	pub new_part_fs: Option<String>,
@@ -1262,8 +1278,8 @@ pub struct NewPartition {
 }
 
 impl NewPartition {
-	pub fn new(part_start: u64, sector_size: u64, total_size: DiskSize, free_space_id: Option<u64>) -> Self {
-		let bytes = total_size.as_bytes(DiskSize::Literal(u64::MAX));
+	pub fn new(fs_id: u64, part_start: u64, sector_size: u64, total_size: u64) -> Self {
+		let bytes = total_size * sector_size;
 		let sectors = bytes.div_ceil(sector_size); // round up
 		let part_end = part_start + sectors - 1;
 		let fs_buttons = {
@@ -1286,7 +1302,7 @@ impl NewPartition {
 		let mut size_input = LineEditor::new("New Partition Size", None::<&str>);
 		size_input.focus();
 		Self {
-			free_space_id,
+			fs_id,
 			part_start,
 			sector_size,
 			total_size,
@@ -1301,6 +1317,9 @@ impl NewPartition {
 			new_part_mount_point: None,
 			mount_input
 		}
+	}
+	pub fn total_size_bytes(&self) -> u64 {
+		self.total_size * self.sector_size
 	}
 	pub fn render_size_input(&mut self, f: &mut Frame, area: Rect) {
 		let chunks = Layout::default()
@@ -1327,10 +1346,10 @@ impl NewPartition {
 			.split(chunks[1]);
 
 		let info_box = InfoBox::new("Free Space Info", styled_block(vec![
-				vec![(Some((Color::Yellow, Modifier::BOLD)), "Sector Size: "), (None, &format!("{}", self.sector_size))],
-				vec![(Some((Color::Yellow, Modifier::BOLD)), "Partition Start Sector: "), (None, &format!("{}", self.part_start))],
-				vec![(Some((Color::Yellow, Modifier::BOLD)), "Partition End Sector: "), (None, &format!("{}", self.part_end))],
-				vec![(Some((Color::Yellow, Modifier::BOLD)), "Total Free Space: "), (None, &format!("{}", self.total_size))],
+				vec![(HIGHLIGHT, "Sector Size: "), (None, &format!("{}", self.sector_size))],
+				vec![(HIGHLIGHT, "Partition Start Sector: "), (None, &format!("{}", self.part_start))],
+				vec![(HIGHLIGHT, "Partition End Sector: "), (None, &format!("{}", self.part_end))],
+				vec![(HIGHLIGHT, "Total Free Space: "), (None, &bytes_readable(self.total_size_bytes()))],
 				vec![(None, "")],
 				vec![(None, "Enter the desired size for the new partition. You can specify sizes in bytes (B), kilobytes (KB), megabytes (MB), gigabytes (GB), terabytes (TB), or as a percentage of the total free space (e.g., 50%). A number given without a unit is counted in sectors.")],
 				vec![(None, "Examples: "), (Some((Color::Green, Modifier::BOLD)), "10GB"), (None, ", "), (Some((Color::Green, Modifier::BOLD)), "500MiB"), (None, ", "), (Some((Color::Green, Modifier::BOLD)), "100%")],
@@ -1347,14 +1366,17 @@ impl NewPartition {
 				if input.is_empty() {
 					return Signal::Wait;
 				}
-				match DiskSize::from_str(input) {
-					Ok(size) => {
+				let Some(ref device) = installer.drive_config else {
+					return Signal::Error(anyhow::anyhow!("No drive config available for new partition size input"));
+				};
+				match parse_sectors(input, device.sector_size(), device.size()) {
+					Some(size) => {
 						self.new_part_size = Some(size);
 						self.size_input.unfocus();
 						self.fs_buttons.focus();
 						Signal::Wait
 					}
-					Err(_) => {
+					None => {
 						self.size_input.error("Invalid size input");
 						Signal::Wait
 					}
@@ -1481,12 +1503,14 @@ impl NewPartition {
 			KeyCode::Enter => {
 				let input = self.mount_input.get_value().unwrap();
 				let input = input.as_str().unwrap().trim(); // TODO: handle these unwraps
-				let taken_mounts: Vec<String> = installer
-						.drive_config_builder
-						.layout
-						.iter()
-						.filter_map(|d| d.mount_point.clone())
-						.collect();
+				let Some(ref mut device) = installer.drive_config else {
+					return Signal::Error(anyhow::anyhow!("No drive config available for new partition mount point input"));
+				};
+				let taken_mounts: Vec<String> = device
+					.layout()
+					.iter()
+					.filter_map(|d| d.mount_point().map(|s| s.to_string()))
+					.collect();
 
 				if let Err(err) = SetMountPoint::validate_mount_point(input, &taken_mounts) {
 					self.mount_input.error(&err);
@@ -1500,39 +1524,25 @@ impl NewPartition {
 				} else {
 					vec![]
 				};
-
-				let new_disk_entry_name = "-".to_string();
-				let parent = installer.selected_drive_info.as_ref().map(|d| d.device.clone());
-				let new_disk_entry = DiskEntry {
-					id: get_entry_id(new_disk_entry_name.clone(), self.part_start, self.new_part_size.unwrap_or(self.total_size).as_bytes(DiskSize::Literal(u64::MAX)).div_ceil(self.sector_size), None),
-					parent,
-					device: new_disk_entry_name,
-					entry_type: EntryType::Partition,
-					read_only: false,
-					start: self.part_start as usize,
-					size: self.new_part_size.unwrap(),
-					fs_type: self.new_part_fs.clone(),
-					mount_point: self.new_part_mount_point.clone(),
-					label: None,
-					flags,
-					status: PartStatus::Create,
-					sector_size: Some(DiskSize::Literal(self.sector_size)),
+				let Some(size) = self.new_part_size else {
+					return Signal::Error(anyhow::anyhow!("No new partition size specified when finalizing new partition"));
 				};
-				installer.drive_config_builder.insert_new_entry(new_disk_entry);
 
-				if let Some(id) = self.free_space_id {
-					if let Some(free_space) = installer.drive_config_builder.find_by_id_mut(id) {
-						let used_sectors = self.new_part_size.unwrap().as_sectors(self.sector_size as usize);
-						if free_space.size.as_bytes(DiskSize::Literal(u64::MAX)) > self.new_part_size.unwrap().as_bytes(DiskSize::Literal(u64::MAX)) {
-							free_space.start += used_sectors as usize;
-							let new_size_bytes = free_space.size.as_bytes(DiskSize::Literal(u64::MAX)).saturating_sub(self.new_part_size.unwrap().as_bytes(DiskSize::Literal(u64::MAX)));
-							free_space.size = DiskSize::Literal(new_size_bytes);
-						} else {
-						}
-					} else {
-						log::warn!("Failed to find free space entry with id {id}");
-					}
-				}
+				let new_part = Partition::new(
+					self.part_start,
+					size,
+					self.sector_size,
+					PartStatus::Create,
+					None,
+					self.new_part_fs.clone(),
+					self.new_part_mount_point.clone(),
+					None,
+					false,
+					flags
+				);
+				if let Err(e) = device.new_partition(new_part) {
+					return Signal::Error(anyhow::anyhow!("Failed to create new partition: {}", e));
+				};
 
 				Signal::Pop
 			}
@@ -1571,29 +1581,19 @@ impl Page for NewPartition {
 
 pub struct AlterPartition {
 	pub buttons: WidgetBox,
-	pub dev_id: u64,
+	pub part_id: u64,
 	pub part_status: PartStatus,
 }
 
 impl AlterPartition {
-	pub fn new(dev_id: u64, part_status: String, flags: Vec<String>) -> Self {
-		let part_status = if part_status == PartStatus::Exists.to_string() {
-			PartStatus::Exists
-		} else if part_status == PartStatus::Modify.to_string() {
-			PartStatus::Modify
-		} else if part_status == PartStatus::Create.to_string() {
-			PartStatus::Create
-		} else if part_status == PartStatus::Delete.to_string() {
-			PartStatus::Delete
-		} else {
-			PartStatus::Unknown
-		};
-		let buttons = Self::buttons_by_status(part_status, flags);
+	pub fn new(part: Partition) -> Self {
+		let part_status = part.status();
+		let buttons = Self::buttons_by_status(*part_status, part.flags());
 		let mut button_row = WidgetBox::button_menu(buttons);
 		button_row.focus();
-		Self { buttons: button_row, dev_id, part_status }
+		Self { buttons: button_row, part_id: part.id(), part_status: *part_status }
 	}
-	pub fn buttons_by_status(status: PartStatus, flags: Vec<String>) -> Vec<Box<dyn ConfigWidget>> {
+	pub fn buttons_by_status(status: PartStatus, flags: &[String]) -> Vec<Box<dyn ConfigWidget>> {
 		match status {
 			PartStatus::Exists => vec![
 				Box::new(Button::new("Set Mount Point")),
@@ -1744,21 +1744,28 @@ impl Page for AlterPartition {
 				let Some(idx) = self.buttons.selected_child() else {
 					return Signal::Wait;
 				};
+				let Some(ref mut device) = installer.drive_config else {
+					return Signal::Error(anyhow::anyhow!("No drive config available for altering partition"));
+				};
 				match self.part_status {
 					PartStatus::Exists => {
+						let Some(part) = device.partition_by_id_mut(self.part_id) else {
+							return Signal::Error(anyhow::anyhow!("No partition found with id {}", self.part_id));
+						};
 						match idx {
 							0 => {
 								// Set Mount Point
-								Signal::Push(Box::new(SetMountPoint::new(self.dev_id)))
+								Signal::Push(Box::new(SetMountPoint::new(self.part_id)))
 							}
 							1 => {
 								// Mark For Modification
-								installer.drive_config_builder.mark_part_as_modify(self.dev_id);
+								part.set_status(PartStatus::Modify);
 								Signal::Pop
 							}
 							2 => {
 								// Delete Partition
-								installer.drive_config_builder.delete_partition(self.dev_id);
+								part.set_status(PartStatus::Delete);
+								device.calculate_free_space();
 								Signal::Pop
 							}
 							3 => {
@@ -1772,7 +1779,7 @@ impl Page for AlterPartition {
 						match idx {
 							0 => {
 								// Set Mount Point
-								Signal::Push(Box::new(SetMountPoint::new(self.dev_id)))
+								Signal::Push(Box::new(SetMountPoint::new(self.part_id)))
 							}
 							1 => {
 								if let Some(child) = self.buttons.focused_child_mut() {
@@ -1781,7 +1788,13 @@ impl Page for AlterPartition {
 										let Value::Bool(checked) = value else {
 											return Signal::Wait;
 										};
-										installer.drive_config_builder.set_part_flag(self.dev_id, "boot", checked);
+										if let Some(part) = device.partition_by_id_mut(self.part_id) {
+											if checked {
+												part.add_flag("boot");
+											} else {
+												part.remove_flag("boot");
+											}
+										}
 									}
 								}
 								Signal::Wait
@@ -1793,7 +1806,13 @@ impl Page for AlterPartition {
 										let Value::Bool(checked) = value else {
 											return Signal::Wait;
 										};
-										installer.drive_config_builder.set_part_flag(self.dev_id, "esp", checked);
+										if let Some(part) = device.partition_by_id_mut(self.part_id) {
+											if checked {
+												part.add_flag("esp");
+											} else {
+												part.remove_flag("esp");
+											}
+										}
 									}
 								}
 								Signal::Wait
@@ -1805,27 +1824,37 @@ impl Page for AlterPartition {
 										let Value::Bool(checked) = value else {
 											return Signal::Wait;
 										};
-										installer.drive_config_builder.set_part_flag(self.dev_id, "bls_boot", checked);
+										if let Some(part) = device.partition_by_id_mut(self.part_id) {
+											if checked {
+												part.add_flag("bls_boot");
+											} else {
+												part.remove_flag("bls_boot");
+											}
+										}
 									}
 								}
 								Signal::Wait
 							}
 							4 => {
 								// Change Filesystem
-								Signal::Push(Box::new(SelectFilesystem::new(self.dev_id)))
+								Signal::Push(Box::new(SelectFilesystem::new(Some(self.part_id))))
 							}
 							5 => {
 								// Set Label
-								Signal::Push(Box::new(SetLabel::new(self.dev_id)))
+								Signal::Push(Box::new(SetLabel::new(self.part_id)))
 							}
 							6 => {
 								// Unmark for modification
-								installer.drive_config_builder.unmark_part_as_modify(self.dev_id);
+								if let Some(part) = device.partition_by_id_mut(self.part_id) {
+									part.set_status(PartStatus::Exists);
+								}
 								Signal::Pop
 							}
 							7 => {
 								// Delete Partition
-								installer.drive_config_builder.delete_partition(self.dev_id);
+								if let Some(part) = device.partition_by_id_mut(self.part_id) {
+									part.set_status(PartStatus::Delete);
+								}
 								Signal::Pop
 							}
 							8 => {
@@ -1839,7 +1868,7 @@ impl Page for AlterPartition {
 						match idx {
 							0 => {
 								// Set Mount Point
-								Signal::Push(Box::new(SetMountPoint::new(self.dev_id)))
+								Signal::Push(Box::new(SetMountPoint::new(self.part_id)))
 							}
 							1 => {
 								if let Some(child) = self.buttons.focused_child_mut() {
@@ -1848,7 +1877,13 @@ impl Page for AlterPartition {
 										let Value::Bool(checked) = value else {
 											return Signal::Wait;
 										};
-										installer.drive_config_builder.set_part_flag(self.dev_id, "boot", checked);
+										if let Some(part) = device.partition_by_id_mut(self.part_id) {
+											if checked {
+												part.add_flag("boot");
+											} else {
+												part.remove_flag("boot");
+											}
+										}
 									}
 								}
 								Signal::Wait
@@ -1860,7 +1895,13 @@ impl Page for AlterPartition {
 										let Value::Bool(checked) = value else {
 											return Signal::Wait;
 										};
-										installer.drive_config_builder.set_part_flag(self.dev_id, "esp", checked);
+										if let Some(part) = device.partition_by_id_mut(self.part_id) {
+											if checked {
+												part.add_flag("esp");
+											} else {
+												part.remove_flag("esp");
+											}
+										}
 									}
 								}
 								Signal::Wait
@@ -1872,22 +1913,33 @@ impl Page for AlterPartition {
 										let Value::Bool(checked) = value else {
 											return Signal::Wait;
 										};
-										installer.drive_config_builder.set_part_flag(self.dev_id, "bls_boot", checked);
+										if let Some(part) = device.partition_by_id_mut(self.part_id) {
+											if checked {
+												part.add_flag("bls_boot");
+											} else {
+												part.remove_flag("bls_boot");
+											}
+										}
 									}
 								}
 								Signal::Wait
 							}
 							4 => {
 								// Change Filesystem
-								Signal::Push(Box::new(SelectFilesystem::new(self.dev_id)))
+								Signal::Push(Box::new(SelectFilesystem::new(Some(self.part_id))))
 							}
 							5 => {
 								// Set Label
-								Signal::Push(Box::new(SetLabel::new(self.dev_id)))
+								Signal::Push(Box::new(SetLabel::new(self.part_id)))
 							}
 							6 => {
 								// Delete Partition
-								installer.drive_config_builder.delete_partition(self.dev_id);
+								if let Some(part) = device.partition_by_id_mut(self.part_id) {
+									part.set_status(PartStatus::Delete);
+								}
+								if let Err(e) = device.remove_partition(self.part_id) {
+									return Signal::Error(anyhow::anyhow!("{}", e));
+								};
 								Signal::Pop
 							}
 							7 => {
@@ -1963,9 +2015,9 @@ impl Page for SetMountPoint {
 			styled_block(vec![
 				vec![(None, "Specify the mount point for the selected partition.")],
 				vec![(None, "Examples of valid mount points include:")],
-				vec![(None, "- "), (Some((Color::Yellow, Modifier::BOLD)), "/")],
-				vec![(None, "- "), (Some((Color::Yellow, Modifier::BOLD)), "/home")],
-				vec![(None, "- "), (Some((Color::Yellow, Modifier::BOLD)), "/boot")],
+				vec![(None, "- "), (HIGHLIGHT, "/")],
+				vec![(None, "- "), (HIGHLIGHT, "/home")],
+				vec![(None, "- "), (HIGHLIGHT, "/boot")],
 				vec![(None, "Mount points must be absolute paths.")],
 			])
 		);
@@ -1977,28 +2029,30 @@ impl Page for SetMountPoint {
 			KeyCode::Esc => Signal::Pop,
 			KeyCode::Enter => {
 				let mount_point = self.editor.get_value().unwrap().as_str().unwrap().trim().to_string();
-				let current_mount = installer
-						.drive_config_builder
-						.layout
-						.iter()
-						.find(|p| p.id == self.dev_id)
-						.and_then(|p| p.mount_point.clone());
+				let Some(device) = installer.drive_config.as_mut() else {
+					return Signal::Error(anyhow::anyhow!("No drive config available for setting mount point"));
+				};
+				let current_mount = device
+						.partitions()
+						.find(|p| p.id() == self.dev_id)
+						.and_then(|p| p.mount_point().clone());
 
-				let mut taken_mounts: Vec<String> = installer
-						.drive_config_builder
-						.layout
-						.iter()
-						.filter_map(|d| d.mount_point.clone())
-						.collect();
+				let mut taken_mounts: Vec<String> = device
+					.partitions()
+					.filter_map(|d| d.mount_point().map(|mp| mp.to_string()))
+					.collect();
 
 				if let Some(current_mount) = current_mount {
-						taken_mounts.retain(|mp| mp != &current_mount);
+					taken_mounts.retain(|mp| mp != &current_mount);
 				}
 				if let Err(err) = Self::validate_mount_point(&mount_point, &taken_mounts) {
 					self.editor.error(&err);
 					return Signal::Wait;
 				}
-				installer.drive_config_builder.set_part_mount_point(self.dev_id, &mount_point);
+
+				if let Some(part) = device.partition_by_id_mut(self.dev_id) {
+					part.set_mount_point(&mount_point);
+				}
 				Signal::PopCount(2)
 			}
 			_ => self.editor.handle_input(event)
@@ -2050,7 +2104,7 @@ impl Page for SetLabel {
 				vec![(None, "Specify a label for the selected partition.")],
 				vec![(None, "Partition labels can help identify partitions in the system.")],
 				vec![(None, "")],
-				vec![(Some((Color::Yellow,Modifier::BOLD)), "NOTE: If possible, you should make sure that your labels are all uppercase letters.")],
+				vec![(HIGHLIGHT, "NOTE: If possible, you should make sure that your labels are all uppercase letters.")],
 				vec![(None, "Labels with lowercase letters may break certain tools, and they also cannot be used with vfat filesystems.")],
 			])
 		);
@@ -2074,7 +2128,14 @@ impl Page for SetLabel {
 					self.editor.error("Label cannot contain spaces.");
 					return Signal::Wait;
 				}
-				installer.drive_config_builder.set_part_label(self.dev_id, &label);
+				let Some(drive_config) = installer.drive_config.as_mut() else {
+					return Signal::Error(anyhow::anyhow!("No drive config available for setting partition label"));
+				};
+				let Some(part) = drive_config.partition_by_id_mut(self.dev_id) else {
+					return Signal::Error(anyhow::anyhow!("No partition found with id {}", self.dev_id));
+				};
+
+				part.set_label(&label);
 				Signal::PopCount(2)
 			}
 			_ => self.editor.handle_input(event)

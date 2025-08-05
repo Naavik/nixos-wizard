@@ -183,6 +183,9 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 							debug!("WriteCfg signal received");
 							// Handle configuration writing here
 						}
+						Signal::Error(err) => {
+							return Err(anyhow::anyhow!("{}", err));
+						}
 					}
 				} else {
 					// No pages, push the initial page

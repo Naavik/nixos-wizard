@@ -1,474 +1,760 @@
-use std::{fmt::Display, process::Command, str::FromStr};
+use std::{fmt::Display, process::Command, str::FromStr, sync::atomic::AtomicU64};
 
 use ratatui::layout::Constraint;
 use serde_json::{Map, Value};
 
 use crate::{attrset, merge_attrs, nix::{fmt_nix, nixstr}, widget::TableWidget};
 
+static NEXT_PART_ID: AtomicU64 = AtomicU64::new(1);
+
 /// Hash attributes into a stable id
 ///
 /// Using this function to obtain ids for each DiskEntry
 /// ensures that we can always identify an entry, even with incomplete data
 /// we hash using name, start sector, size, and parent as these are generally unchanging attributes
-pub fn get_entry_id(name: String, start: u64, size: u64, parent: Option<DiskEntry>) -> u64 {
-	use std::hash::{Hash, Hasher};
-	use std::collections::hash_map::DefaultHasher;
-
-	let mut hasher = DefaultHasher::new();
-	name.hash(&mut hasher);
-	start.hash(&mut hasher);
-	size.hash(&mut hasher);
-	if let Some(parent) = parent {
-		parent.device.hash(&mut hasher);
-	}
-	hasher.finish()
+pub fn get_entry_id() -> u64 {
+	NEXT_PART_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DiskSize {
-	Literal(u64),
-	Percentage(u8)
-}
+pub fn bytes_readable(bytes: u64) -> String {
+	const KIB: u64 = 1 << 10;
+	const MIB: u64 = 1 << 20;
+	const GIB: u64 = 1 << 30;
+	const TIB: u64 = 1 << 40;
 
-impl DiskSize {
-	pub fn as_bytes(&self, max_size: DiskSize) -> u64 {
-		let DiskSize::Literal(max_size) = max_size else {
-			log::error!("max_size must be a literal size in bytes");
-			panic!()
-		};
-		match self {
-			DiskSize::Literal(b) => *b,
-			DiskSize::Percentage(p) => ((max_size as f64) * (*p as f64) / 100.0).round() as u64,
-		}
-	}
-	pub fn as_sectors(&self, sector_size: usize) -> usize {
-		let bytes = self.as_bytes(DiskSize::Literal(u64::MAX));
-		(bytes as usize).div_ceil(sector_size) // round up
+	if bytes >= 1 << 40 {
+		format!("{:.2} TiB", bytes as f64 / TIB as f64)
+	} else if bytes >= 1 << 30 {
+		format!("{:.2} GiB", bytes as f64 / GIB as f64)
+	} else if bytes >= 1 << 20 {
+		format!("{:.2} MiB", bytes as f64 / MIB as f64)
+	} else if bytes >= 1 << 10 {
+		format!("{:.2} KiB", bytes as f64 / KIB as f64)
+	} else {
+		bytes.to_string()
 	}
 }
 
-impl FromStr for DiskSize {
-	type Err = String;
+pub fn parse_sectors(s: &str, sector_size: u64, total_sectors: u64) -> Option<u64> {
+	let s = s.trim().to_lowercase();
 
-	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		let s = s.trim();
+	// Define multipliers for binary and decimal units
+	let units: [(&str, f64); 10] = [
+		("tib", (1u64 << 40) as f64),
+		("tb",  1_000_000_000_000.0),
+		("gib", (1u64 << 30) as f64),
+		("gb",  1_000_000_000.0),
+		("mib", (1u64 << 20) as f64),
+		("mb",  1_000_000.0),
+		("kib", (1u64 << 10) as f64),
+		("kb",  1_000.0),
+		("b",   1.0),
+		("%",   0.0), // handled separately
+	];
 
-		// Handle percentage like "100%" or "25 %"
-		if let Some(percent_part) = s.strip_suffix('%') {
-			let percent = percent_part.trim().parse::<u8>()
-				.map_err(|e| e.to_string())?;
+	for (unit, multiplier) in units.iter() {
+		if s.ends_with(unit) {
+			let num_str = s.trim_end_matches(unit).trim();
 
-			if percent > 100 {
-				return Err("Percentage cannot exceed 100%".into());
-			}
-			return Ok(DiskSize::Percentage(percent));
-		}
-
-		// Otherwise treat it as a size (e.g., 200MiB)
-		let mut suffix = String::new();
-		let mut num_part = String::new();
-		let chars = s.chars().peekable();
-
-		for ch in chars {
-			match ch {
-				_ if ch.is_alphabetic() => {
-					suffix.push(ch);
-				}
-				'.' => {
-					num_part.push(ch);
-				}
-				_ if ch.is_ascii_digit() => {
-					num_part.push(ch);
-				}
-				_ => return Err(format!("Invalid character '{ch}' in disk size '{s}'")),
-			}
-		}
-
-
-		let num: f64 = num_part.trim().parse().map_err(|e: std::num::ParseFloatError| e.to_string())?;
-
-		let multiplier = match suffix.trim().to_lowercase().as_str() {
-			"" | "b"      => 1,
-			"k" | "kb"    => 1_000,
-			"ki" | "kib"  => 1 << 10,
-			"m" | "mb"    => 1_000_000,
-			"mi" | "mib"  => 1 << 20,
-			"g" | "gb"    => 1_000_000_000,
-			"gi" | "gib"  => 1 << 30,
-			"t" | "tb"    => 1_000_000_000_000i64,
-			"ti" | "tib"  => 1 << 40,
-			_ => return Err(format!("Unrecognized suffix '{suffix}'")),
-		};
-
-		Ok(DiskSize::Literal((num * multiplier as f64).round() as u64))
-	}
-}
-
-impl std::fmt::Display for DiskSize {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		match self {
-			DiskSize::Percentage(p) => write!(f, "{p}%"),
-			DiskSize::Literal(bytes) => {
-				let mut size = *bytes as f64;
-				let units = ["B", "KB", "MB", "GB", "TB", "PB"];
-				let mut unit = "B";
-
-				for next_unit in &units[1..] {
-					if size < 1000.0 {
-						break;
-					}
-					size /= 1000.0;
-					unit = next_unit;
-				}
-
-				if unit == "B" {
-					write!(f, "{}{}", size as u64, unit)
+			if *unit == "%" {
+				return num_str.parse::<f64>().ok()
+					.map(|v| ((v / 100.0) * total_sectors as f64).round() as u64);
 				} else {
-					write!(f, "{size:.2}{unit}")
+					return num_str.parse::<f64>().ok()
+						.map(|v| ((v * multiplier) / sector_size as f64).round() as u64);
+			}
+		}
+	}
+
+	// If no suffix, assume sectors directly
+	s.parse::<u64>().ok()
+}
+
+pub fn mb_to_sectors(mb: u64, sector_size: u64) -> u64 {
+	let bytes = mb * 1024 * 1024;
+	(bytes + sector_size - 1) / sector_size // round up to nearest sector
+}
+
+/// We are going to be using the `lsblk` command to get disk information.
+///
+/// This is a reasonable approach for accurate data collection, and since Nix is a contender for the title of "greatest thing ever created", we can actually make the assumption that lsblk exists in this environment
+/// The installer is intended to be ran using the flake like `nix run github:km-clay/nixos-wizard`, and it runs in a wrapped environment that includes `lsblk`.
+/// So if lsblk is somehow not available, that is user error.
+pub fn lsblk() -> anyhow::Result<Vec<Disk>> {
+	let output = Command::new("lsblk")
+		.args([
+			"--json",
+			"-o",
+			"NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE,LABEL,START,PHY-SEC",
+			"-b"
+		])
+		.output()?;
+
+	if !output.status.success() {
+		return Err(anyhow::anyhow!("lsblk command failed with status: {}", output.status));
+	}
+
+	let lsblk_json: Value = serde_json::from_slice(&output.stdout)
+		.map_err(|e| anyhow::anyhow!("Failed to parse lsblk output as JSON: {}", e))?;
+
+	let blockdevices = lsblk_json.get("blockdevices")
+		.and_then(|v| v.as_array())
+		.ok_or_else(|| anyhow::anyhow!("lsblk output missing 'blockdevices' array"))?;
+	let mut disks = Vec::new();
+	for device in blockdevices {
+		let dev_type = device.get("type")
+			.and_then(|v| v.as_str())
+			.ok_or_else(|| anyhow::anyhow!("Device entry missing TYPE"))?;
+		if dev_type == "disk" {
+			let disk = parse_disk(device.clone())?;
+			disks.push(disk);
+		}
+	}
+	Ok(disks)
+}
+
+pub fn parse_disk(disk: Value) -> anyhow::Result<Disk> {
+	// disk is a JSON object with fields like NAME, SIZE, TYPE, MOUNTPOINT, FSTYPE, LABEL, START, PHY-SEC
+	let obj = disk.as_object().ok_or_else(|| anyhow::anyhow!("Disk entry is not an object"))?;
+
+	let name = obj.get("name")
+		.and_then(|v| v.as_str())
+		.ok_or_else(|| anyhow::anyhow!("Disk entry missing NAME"))?.to_string();
+
+	let size = obj.get("size")
+		.and_then(|v| v.as_u64())
+		.ok_or_else(|| anyhow::anyhow!("Disk entry missing or invalid SIZE: {:?}", obj.clone()))?;
+
+	let sector_size = obj.get("phy-sec")
+		.and_then(|v| v.as_u64())
+		.unwrap_or(512); // default to 512 if missing
+
+	// Parse partitions
+	let mut layout = Vec::new();
+	if let Some(children) = obj.get("children").and_then(|v| v.as_array()) {
+		for part in children {
+			let partition = parse_partition(part)?;
+			layout.push(partition);
+		}
+	}
+
+	let mut disk = Disk::new(name, size / sector_size, sector_size, layout);
+	disk.calculate_free_space(); // Ensure free space is calculated
+	Ok(disk)
+}
+
+pub fn parse_partition(part: &Value) -> anyhow::Result<DiskItem> {
+	let obj = part.as_object().ok_or_else(|| anyhow::anyhow!("Partition entry is not an object"))?;
+
+	let start = obj.get("start")
+		.and_then(|v| v.as_u64())
+		.ok_or_else(|| anyhow::anyhow!("Partition entry missing or invalid START"))?;
+
+	let size = obj.get("size")
+		.and_then(|v| v.as_u64())
+		.ok_or_else(|| anyhow::anyhow!("Partition entry missing or invalid SIZE"))?;
+
+	let sector_size = obj.get("phy-sec")
+		.and_then(|v| v.as_u64())
+		.unwrap_or(512); // default to 512 if missing
+
+	let name = obj.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
+	let fs_type = obj.get("fstype").and_then(|v| v.as_str()).map(|s| s.to_string());
+	let mount_point = obj.get("mountpoint").and_then(|v| v.as_str()).map(|s| s.to_string());
+	let label = obj.get("label").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+	let ro = false; // lsblk does not provide read-only info directly
+
+	let flags = vec![]; // Could be populated based on other attributes if needed
+
+	let status = PartStatus::Exists; // Default to existing, could be modified based on other criteria
+
+	Ok(DiskItem::Partition(Partition::new(
+		start,
+		size / sector_size,
+		sector_size,
+		status,
+		name,
+		fs_type,
+		mount_point,
+		label,
+		ro,
+		flags
+	)))
+}
+
+pub fn disk_table(disks: &[Disk]) -> TableWidget {
+	let (headers, widths): (Vec<String>, Vec<Constraint>) = DiskTableHeader::disk_table_header_info().into_iter().unzip();
+	let rows: Vec<Vec<String>> = disks.iter().map(|d| d.as_table_row(&DiskTableHeader::disk_table_headers())).collect();
+	TableWidget::new("Disks", widths, headers, rows)
+}
+
+pub fn part_table(disk_items: &[DiskItem], sector_size: u64) -> TableWidget {
+	let (headers, widths): (Vec<String>, Vec<Constraint>) = DiskTableHeader::partition_table_header_info().into_iter().unzip();
+	let rows: Vec<Vec<String>> = disk_items.iter().map(|item| item.as_table_row(sector_size, &DiskTableHeader::partition_table_headers())).collect();
+	TableWidget::new("Partitions", widths, headers, rows)
+}
+
+#[derive(Clone,Debug)]
+pub struct Disk {
+	name: String,
+	size: u64, // sectors
+	sector_size: u64,
+
+	initial_layout: Vec<DiskItem>,
+	/// Model of the disk's sector usage
+	/// The sector spans are `half-open ranges`
+	/// This means the start value is inclusive, and the end (start + size) is exclusive.
+	layout: Vec<DiskItem>
+}
+
+impl Disk {
+	pub fn new(
+		name: String,
+		size: u64,
+		sector_size: u64,
+		layout: Vec<DiskItem>
+	) -> Self {
+		let mut new = Self {
+			name,
+			size,
+			sector_size,
+			initial_layout: layout.clone(),
+			layout
+		};
+		new.calculate_free_space();
+		new
+	}
+	pub fn as_table_row(&self, headers: &[DiskTableHeader]) -> Vec<String> {
+		headers.iter().map(|h| {
+			match h {
+				DiskTableHeader::Status => "".into(),
+				DiskTableHeader::Device => self.name.clone(),
+				DiskTableHeader::Label => "".into(),
+				DiskTableHeader::Start => "".into(), // Disk does not have a start sector in this context
+				DiskTableHeader::End => "".into(), // Disk does not have an end sector in this context
+				DiskTableHeader::Size => bytes_readable(self.size_bytes()),
+				DiskTableHeader::FSType => "".into(),
+				DiskTableHeader::MountPoint => "".into(),
+				DiskTableHeader::Flags => "".into(),
+				DiskTableHeader::ReadOnly => "no".into(),
+			}
+		}).collect()
+	}
+	pub fn name(&self) -> &str {
+		&self.name
+	}
+	pub fn set_name<S: Into<String>>(&mut self, name: S) {
+		self.name = name.into();
+	}
+	pub fn size(&self) -> u64 {
+		self.size
+	}
+	pub fn set_size(&mut self, size: u64) {
+		self.size = size;
+	}
+	pub fn sector_size(&self) -> u64 {
+		self.sector_size
+	}
+	pub fn set_sector_size(&mut self, sector_size: u64) {
+		self.sector_size = sector_size;
+	}
+	pub fn layout(&self) -> &[DiskItem] {
+		&self.layout
+	}
+	pub fn partitions(&self) -> impl Iterator<Item = &Partition> {
+		self.layout.iter().filter_map(|item| {
+			if let DiskItem::Partition(p) = item { Some(p) } else { None }
+		})
+	}
+	pub fn partitions_mut(&mut self) -> impl Iterator<Item = &mut Partition> {
+		self.layout.iter_mut().filter_map(|item| {
+			if let DiskItem::Partition(p) = item { Some(p) } else { None }
+		})
+	}
+	pub fn partition_by_id(&self, id: u64) -> Option<&Partition> {
+		self.partitions().find(|p| p.id() == id)
+	}
+	pub fn partition_by_id_mut(&mut self, id: u64) -> Option<&mut Partition> {
+		self.partitions_mut().find(|p| p.id() == id)
+	}
+	pub fn free_spaces(&self) -> impl Iterator<Item = (u64, u64)> {
+		self.layout.iter().filter_map(|item| {
+			if let DiskItem::FreeSpace { start, size, .. } = *item { Some((start, size)) } else { None }
+		})
+	}
+	pub fn reset_layout(&mut self) {
+		self.layout = self.initial_layout.clone();
+		self.calculate_free_space();
+	}
+	pub fn size_bytes(&self) -> u64 {
+		self.size * self.sector_size
+	}
+	pub fn remove_partition(&mut self, id: u64) -> anyhow::Result<()> {
+		let Some(part_idx) = self.layout.iter().position(|item| { item.id() == id }) else {
+			return Err(anyhow::anyhow!("No item with id {}", id));
+		};
+		let DiskItem::Partition(_) = &mut self.layout[part_idx] else {
+			return Err(anyhow::anyhow!("Item with id {} is not a partition", id));
+		};
+		self.layout.remove(part_idx);
+
+		self.calculate_free_space();
+		Ok(())
+	}
+	pub fn new_partition(&mut self, part: Partition) -> anyhow::Result<()> {
+		// Ensure the new partition does not overlap existing partitions
+		self.clear_free_space();
+		log::debug!("Adding new partition: {:#?}", part);
+		log::debug!("Current layout: {:#?}", self.layout);
+		let new_start = part.start();
+		let new_end = part.end();
+		for item in &self.layout {
+			if let DiskItem::Partition(p) = item {
+				if p.status == PartStatus::Delete {
+					continue;
+				}
+				let existing_start = p.start();
+				let existing_end = p.end();
+				if (new_start < existing_end) && (new_end > existing_start) {
+					return Err(anyhow::anyhow!("New partition overlaps with existing partition"));
 				}
 			}
 		}
+		self.layout.push(DiskItem::Partition(part));
+		log::debug!("Updated layout: {:#?}", self.layout);
+		self.calculate_free_space();
+		log::debug!("After calculating free space: {:#?}", self.layout);
+		Ok(())
+	}
+
+	pub fn clear_free_space(&mut self) {
+		self.layout.retain(|item| {
+			!matches!(item, DiskItem::FreeSpace { .. })
+		});
+		self.normalize_layout();
+	}
+
+	/// Recomputes FreeSpace entries based on current Partitions.
+	pub fn calculate_free_space(&mut self) {
+		// 1. Retain only partitions
+		let (deleted, mut rest) = self.layout
+			.iter()
+			.cloned()
+			.partition::<Vec<_>, _>(|item| matches!(item, DiskItem::Partition(p) if p.status == PartStatus::Delete));
+
+		// 2. Sort partitions by start sector
+		rest.sort_by_key(|p| p.start());
+
+		let mut gaps = vec![];
+		let mut cursor = 2048u64; // track the current sector
+
+		// 3. Walk through partitions, inserting FreeSpace where gaps exist
+		for p in rest.iter() {
+			let DiskItem::Partition(p) = p else { continue; };
+			// 1. Handle gap before this partition
+			if p.start() > cursor {
+				let size = p.start() - cursor;
+				if size > mb_to_sectors(5, self.sector_size) {
+					gaps.push(DiskItem::FreeSpace {
+						id: get_entry_id(),
+						start: cursor,
+						size,
+					});
+				}
+			}
+
+			// 3. Advance cursor past the partition
+			cursor = p.start() + p.size();
+		}
+
+		// 4. Check for free space at the end
+		if cursor < self.size {
+			let size = self.size - cursor;
+			if size > mb_to_sectors(5, self.sector_size) {
+				gaps.push(DiskItem::FreeSpace {
+					id: get_entry_id(),
+					start: cursor,
+					size: self.size - cursor,
+				});
+			}
+		}
+
+		let mut rest_with_gaps = rest.into_iter().chain(gaps).collect::<Vec<_>>();
+		rest_with_gaps.sort_by_key(|item| item.start());
+		let new_layout = deleted.into_iter().chain(rest_with_gaps).collect();
+		self.layout = new_layout;
+		self.normalize_layout();
+	}
+
+	/// Sort the layout, and merge adjacent free space
+	pub fn normalize_layout(&mut self) {
+		// Now we move all of the deleted entries to the start, for visual organization
+		let (mut new_layout, others): (Vec<_>, Vec<_>) = self
+			.layout()
+			.to_vec()
+			.into_iter()
+			.partition(|item| matches!(item, DiskItem::Partition(p) if p.status == PartStatus::Delete));
+		let mut last_free: Option<(u64, u64)> = None; // (start, size)
+
+		new_layout.extend(others);
+		let mut new_new_layout = vec![];
+
+		for item in &new_layout {
+			match item {
+				DiskItem::FreeSpace { start, size, .. } => {
+					if let Some((last_start, last_size)) = last_free {
+						// Merge with previous free space
+						last_free = Some((last_start, last_size + size));
+					} else {
+						last_free = Some((*start, *size));
+					}
+				},
+				DiskItem::Partition(p) => {
+					if let Some((start, size)) = last_free.take() {
+						new_new_layout.push(DiskItem::FreeSpace { id: get_entry_id(), start, size });
+					}
+					new_new_layout.push(DiskItem::Partition(p.clone()));
+				}
+			}
+		}
+		if let Some((start, size)) = last_free.take() {
+			new_new_layout.push(DiskItem::FreeSpace { id: get_entry_id(), start, size });
+		}
+
+		self.layout = new_new_layout;
+	}
+
+	pub fn use_default_layout(&mut self) {
+		// 1. Remove all free space
+		// 2. Set all existing/modified partitions to deleted
+		// 3. Create a boot and root partition
+		self.layout.retain(|item| {
+			match item {
+				DiskItem::FreeSpace { .. } => false,
+				DiskItem::Partition(part) => part.status != PartStatus::Create,
+			}
+		});
+		for part in self.layout.iter_mut() {
+			let DiskItem::Partition(part) = part else { continue; };
+			part.status = PartStatus::Delete
+		}
+		let boot_part = Partition::new(
+			2048,
+			mb_to_sectors(500, self.sector_size),
+			self.sector_size,
+			PartStatus::Create,
+			None,
+			Some("fat32".into()),
+			Some("/boot".into()),
+			Some("BOOT".into()),
+			false,
+			vec!["boot".into(), "esp".into()]
+		);
+		let root_part = Partition::new(
+			boot_part.end(), // start at the end of boot partition
+			self.size - (boot_part.end()), // all remaining sectors
+			self.sector_size,
+			PartStatus::Create,
+			None,
+			Some("ext4".into()),
+			Some("/".into()),
+			Some("ROOT".into()),
+			false,
+			vec![]
+		);
+		self.layout.push(DiskItem::Partition(boot_part));
+		self.layout.push(DiskItem::Partition(root_part));
 	}
 }
 
 #[derive(Clone,Debug)]
-pub struct DiskTable(Vec<DiskEntry>);
+pub enum DiskItem {
+	Partition(Partition),
+	FreeSpace { id: u64, start: u64, size: u64 }, // size in sectors
+}
 
-impl DiskTable {
-	pub fn new(entries: Vec<DiskEntry>) -> Self {
-		Self(entries)
-	}
-	pub fn entries(&self) -> &[DiskEntry] {
-		&self.0
-	}
-	pub fn rows(&self) -> Vec<Vec<String>> {
-		let table = self.as_widget(Some(DiskTableHeader::all_headers()));
-		table.rows().to_vec()
-	}
-	pub fn empty() -> Self {
-		Self(vec![])
-	}
-	pub fn filter_by<F>(&self, f: F) -> Self
-	where
-		F: Fn(&DiskEntry) -> bool,
-	{
-		let filtered = self.0.iter().filter(|&x| f(x)).cloned().collect();
-		Self(filtered)
-	}
-	pub fn find_by<F>(&self, f: F) -> Option<DiskEntry>
-	where
-		F: Fn(&DiskEntry) -> bool,
-	{
-		self.0.iter().find(|&x| f(x)).cloned()
-	}
-	pub fn from_lsblk() -> anyhow::Result<Self> {
-		let Ok(output) = Command::new("lsblk")
-			.args(["--json", "-o", "NAME,MODEL,TYPE,RO,SIZE,PHY-SEC,MOUNTPOINT,FSTYPE,LABEL,START", "-b"])
-			.output() else {
-				return Err(anyhow::anyhow!("Failed to run lsblk command"));
-			};
-		if !output.status.success() {
-			return Err(anyhow::anyhow!("lsblk command failed with status: {}", output.status));
+impl DiskItem {
+	pub fn start(&self) -> u64 {
+		match self {
+			DiskItem::Partition(p) => p.start,
+			DiskItem::FreeSpace { start, .. } => *start,
 		}
-		let stdout = String::from_utf8_lossy(&output.stdout);
-		let value: Value = serde_json::from_str(&stdout).map_err(|e| anyhow::anyhow!("Failed to parse lsblk JSON output: {}", e))?;
-		let table = Self::from_json(value);
-		let table_with_free_space = table.with_free_space();
-		Ok(table_with_free_space)
 	}
-	fn consolidate_free_space(&mut self) {
-		// If any free space entries appear adjacent to one another, they should merge into a single entry
-		// Additionally, this merging can cross over entries with the "delete" status
-		self.0.sort_by_key(|e| e.start);
-		let mut consolidated = vec![];
-		let mut entries = std::mem::take(&mut self.0).into_iter();
-		let mut current_free = None;
-
-		for entry in entries {
-			match entry.entry_type {
-					EntryType::Disk => {
-						if let Some(free) = current_free.take() {
-							consolidated.push(free);
-						}
-						consolidated.push(entry);
-					}
-					EntryType::FreeSpace => {
-						if let Some(mut free) = current_free.take() {
-							// Merge with existing free space
-							let sector_size = free.sector_size.unwrap_or(DiskSize::Literal(512)).as_bytes(free.size) as usize;
-							let free_end = free.start + free.size.as_sectors(sector_size);
-							let entry_start = entry.start;
-							if entry_start <= free_end {
-								// They overlap or are adjacent
-								let entry_size_sectors = entry.size.as_sectors(sector_size);
-								let new_end = std::cmp::max(free_end, entry.start + entry_size_sectors);
-								let new_size_sectors = new_end - free.start;
-								free.size = DiskSize::Literal((new_size_sectors * sector_size) as u64);
-								current_free = Some(free);
-							} else {
-								// Not adjacent, push the old one and start a new one
-								consolidated.push(free);
-								current_free = Some(entry);
-							}
-						} else {
-							current_free = Some(entry);
-						}
-					}
-					EntryType::Partition => {
-						match entry.status {
-							PartStatus::Delete => {
-								consolidated.push(entry.clone());
-								continue
-							}
-							_ => {
-								if let Some(free) = current_free.take() {
-									consolidated.push(free);
-								}
-							}
-						}
-						consolidated.push(entry.clone());
-					}
-			}
+	pub fn id(&self) -> u64 {
+		match self {
+			DiskItem::Partition(p) => p.id(),
+			DiskItem::FreeSpace { id, .. } => *id,
 		}
-		if let Some(free) = current_free.take() {
-			consolidated.push(free);
+	}
+	pub fn mount_point(&self) -> Option<&str> {
+		match self {
+			DiskItem::Partition(p) => p.mount_point(),
+			DiskItem::FreeSpace { .. } => None,
 		}
-		self.0 = consolidated;
 	}
-	pub fn with_free_space(mut self) -> Self {
-		self
-	}
-	pub fn as_widget(&self, headers: Option<impl IntoIterator<Item = DiskTableHeader>>) -> TableWidget {
-		if let Some(headers) = headers {
-			let headers = headers.into_iter().collect::<Vec<_>>();
-			let mut header_names = vec![];
-			let mut header_constraints = vec![];
-			for header in &headers {
-				let (name, constraint) = header.header_info();
-				header_names.push(name);
-				header_constraints.push(constraint);
-			}
-			let mut rows = vec![];
-			for entry in &self.0 {
-				let mut row = vec![];
-				for header in &headers {
-					let cell = match header {
-						DiskTableHeader::Status => entry.status.to_string(),
-						DiskTableHeader::Device => entry.device.clone(),
-						DiskTableHeader::Label => entry.label.clone().unwrap_or_else(|| "-".to_string()),
-						DiskTableHeader::Type => match entry.entry_type {
-							EntryType::Disk => "disk".into(),
-							EntryType::Partition => "partition".into(),
-							EntryType::FreeSpace => "free".into(),
+	pub fn as_table_row(&self, sector_size: u64, headers: &[DiskTableHeader]) -> Vec<String> {
+		match self {
+			DiskItem::Partition(p) => {
+				headers.iter().map(|h| {
+					match h {
+						DiskTableHeader::Status => match p.status() {
+							PartStatus::Delete => "delete".into(),
+							PartStatus::Modify => "modify".into(),
+							PartStatus::Exists => "existing".into(),
+							PartStatus::Create => "create".into(),
+							PartStatus::Unknown => "unknown".into(),
 						},
-						DiskTableHeader::Size => entry.size.to_string(),
-						DiskTableHeader::FSType => entry.fs_type.clone().unwrap_or_else(|| "-".into()),
-						DiskTableHeader::MountPoint => entry.mount_point.clone().unwrap_or_else(|| "-".into()),
-						DiskTableHeader::Flags => if entry.flags.is_empty() {
-							"-".into()
-						} else {
-							entry.flags.join(",")
-						},
-							DiskTableHeader::ReadOnly => if entry.read_only {
-								"yes".into()
-							} else {
-								"no".into()
-							},
-					};
-					row.push(cell);
-				}
-				// We sneak this in right after the last cell is pushed
-				// It isn't rendered in the table, and just acts as metadata for each row
-				row.push(entry.id.to_string());
-
-				rows.push(row);
-			}
-
-			TableWidget::new("Disks", header_constraints, header_names, rows)
-		} else {
-			let headers = DiskTableHeader::all_header_info();
-			let header_names: Vec<String> = headers.iter().map(|(name, _)| name.clone()).collect();
-			let header_constraints: Vec<Constraint> = headers.iter().map(|(_, constraint)| *constraint).collect();
-			let mut rows = vec![];
-			for entry in &self.0 {
-				let row = vec![
-					entry.status.to_string(),
-					entry.device.clone(),
-					entry.label.clone().unwrap_or_else(|| "-".to_string()),
-					match entry.entry_type {
-						EntryType::Disk => "disk".to_string(),
-						EntryType::Partition => "partition".to_string(),
-						EntryType::FreeSpace => "free".to_string(),
-					},
-					entry.size.to_string(),
-					entry.fs_type.clone().unwrap_or_else(|| "-".to_string()),
-					entry.mount_point.clone().unwrap_or_else(|| "-".to_string()),
-					if entry.flags.is_empty() { "-".to_string() } else { entry.flags.join(",") },
-					if entry.read_only { "yes".to_string() } else { "no".to_string() },
-					entry.id.to_string()
-				];
-				rows.push(row);
-			}
-			TableWidget::new("Disks", header_constraints, header_names, rows)
-		}
-	}
-	pub fn from_json(value: Value) -> Self {
-		let mut entries = vec![];
-		let Value::Object(map) = value else {
-			log::error!("Expected JSON object for lsblk output");
-			return Self(entries);
-		};
-
-		let Some(blockdevices) = map.get("blockdevices").and_then(|v| v.as_array()) else {
-			log::error!("Expected 'blockdevices' array in lsblk output");
-			return Self(entries);
-		};
-
-		for device in blockdevices {
-			if let Value::Object(dev_map) = device {
-				Self::flatten_blockdevices(dev_map, &mut entries, None);
-			} else {
-				log::warn!("Expected blockdevice to be an object, got: {device:?}");
-			}
-		}
-
-		Self(entries)
-	}
-	pub fn flatten_blockdevices(value: &Map<String,Value>, rows: &mut Vec<DiskEntry>, parent: Option<String>) {
-		if value.is_empty() {
-			return
-		}
-		let entry = DiskEntry::from_lsblk_entry(value, parent.clone());
-		rows.push(entry.clone());
-		if let Some(children) = value.get("children").and_then(|v| v.as_array()) {
-			for child in children {
-				if let Value::Object(child_map) = child {
-					Self::flatten_blockdevices(child_map, rows, Some(entry.device.clone()));
-				}
-			}
-		}
-	}
-	pub fn default_layout(parent: &str, fs: String) -> Self {
-		let boot_size: DiskSize = "512MiB".parse().expect("Failed to parse boot partition size");
-		let root_size: DiskSize = "100%".parse().expect("Failed to parse root partition size");
-
-		let root_sector_start = (512 * 1024 * 1024) / 512;
-		let boot_sector_start = 2048u64;
-
-		let name = "-".to_string();
-		let boot_hash_size = boot_size.as_bytes(DiskSize::Literal(u64::MAX));
-		let root_hash_size = root_size.as_bytes(DiskSize::Literal(u64::MAX));
-		let entries = vec![
-			DiskEntry {
-				id: get_entry_id(name.clone(),boot_hash_size,boot_sector_start,None),
-				device: "-".to_string(), // placeholder, resolved at apply time
-				status: PartStatus::Create,
-				label: Some("BOOT".into()),
-				entry_type: EntryType::Partition,
-				size: boot_size,
-				start: 2048, // typically starts at sector 2048
-				fs_type: Some("vfat".into()),
-				mount_point: Some("/boot".into()),
-				flags: vec!["boot".into(), "esp".into()],
-				sector_size: Some(DiskSize::Literal(512)),
-				parent: Some(parent.to_string()),
-				read_only: false,
+						DiskTableHeader::Device => p.name().unwrap_or("").into(),
+						DiskTableHeader::Label => p.label().unwrap_or("").into(),
+						DiskTableHeader::Start => p.start().to_string(),
+						DiskTableHeader::End => (p.end() - 1).to_string(),
+						DiskTableHeader::Size => bytes_readable(p.size_bytes(sector_size)),
+						DiskTableHeader::FSType => p.fs_type().unwrap_or("").into(),
+						DiskTableHeader::MountPoint => p.mount_point().unwrap_or("").into(),
+						DiskTableHeader::Flags => p.flags().join(","),
+						DiskTableHeader::ReadOnly => "".into(), // Not applicable for partitions
+					}
+				}).collect()
 			},
-			DiskEntry {
-				id: get_entry_id(name,root_hash_size,root_sector_start as u64,None),
-				device: "-".to_string(),
-				status: PartStatus::Create,
-				label: Some("ROOT".into()),
-				entry_type: EntryType::Partition,
-				size: root_size,
-				start: root_sector_start,
-				fs_type: Some(fs),
-				mount_point: Some("/".into()),
-				flags: vec![],
-				sector_size: Some(DiskSize::Literal(512)),
-				parent: Some(parent.to_string()),
-				read_only: false,
-			},
-		];
-
-		Self(entries)
+			DiskItem::FreeSpace { start, size, .. } => {
+				headers.iter().map(|h| {
+					match h {
+						DiskTableHeader::Status => "free".into(),
+						DiskTableHeader::Device => "".into(),
+						DiskTableHeader::Label => "".into(),
+						DiskTableHeader::Start => start.to_string(),
+						DiskTableHeader::End => ((start + size) - 1).to_string(),
+						DiskTableHeader::Size => bytes_readable(size * sector_size),
+						DiskTableHeader::FSType => "".into(),
+						DiskTableHeader::MountPoint => "".into(),
+						DiskTableHeader::Flags => "".into(),
+						DiskTableHeader::ReadOnly => "".into(), // Not applicable for free space
+					}
+				}).collect()
+			}
+		}
 	}
 }
 
-#[derive(Clone,Debug,PartialEq)]
-pub struct DiskEntry {
-	pub id: u64,
-	pub status: PartStatus,
-	pub device: String,
-	pub label: Option<String>,
-	pub entry_type: EntryType,
-	pub size: DiskSize,
-	pub start: usize,
-	pub fs_type: Option<String>,
-	pub mount_point: Option<String>,
-	pub flags: Vec<String>,
-	pub sector_size: Option<DiskSize>,
-	pub parent: Option<String>,
-	pub read_only: bool,
+#[derive(Clone,Copy,Debug,PartialEq, Eq)]
+pub enum PartStatus {
+	Delete,
+	Modify,
+	Create,
+	Exists,
+	Unknown
 }
 
-impl DiskEntry {
-	pub fn free(start: u64, size: u64, sector_size: u64, disk: &DiskEntry) -> Self {
-		Self {
-			id: get_entry_id("-".to_string(), start, size, Some(disk.clone())),
-			status: PartStatus::Create,
-			device: "-".to_string(),
-			label: None,
-			entry_type: EntryType::FreeSpace,
-			size: DiskSize::Literal(size),
-			start: start as usize,
-			fs_type: None,
-			mount_point: None,
-			flags: vec![],
-			sector_size: Some(DiskSize::Literal(sector_size)),
-			parent: Some(disk.device.clone()),
-			read_only: true,
-		}
-	}
-	pub fn from_lsblk_entry(map: &serde_json::Map<String, Value>, parent: Option<String>) -> Self {
-		let device = map.get("name").and_then(|v| v.as_str()).unwrap_or("-").to_string();
-		let size = map.get("size").and_then(|v| v.as_u64()).map(DiskSize::Literal).unwrap_or(DiskSize::Literal(0));
-		let entry_type = match map.get("type").and_then(|v| v.as_str()) {
-			Some("disk") => EntryType::Disk,
-			Some("part") => EntryType::Partition,
-			Some("rom") => EntryType::Disk, // treat rom as disk for now
-			Some("loop") => EntryType::Disk, // treat loop as disk for now
-			Some("lvm") => EntryType::Disk, // treat lvm as disk for now
-			Some("raid") => EntryType::Disk, // treat raid as disk for now
-			Some("crypt") => EntryType::Disk, // treat crypt as disk for now
-			Some("free") => EntryType::FreeSpace,
-			_ => EntryType::Disk,
-		};
-		let fs_type = map.get("fstype").and_then(|v| v.as_str()).map(|s| s.to_string());
-		let mount_point = map.get("mountpoint").and_then(|v| v.as_str()).map(|s| s.to_string());
-		let label = map.get("label").and_then(|v| v.as_str()).map(|s| s.to_string());
-		let start = map.get("start").and_then(|v| v.as_u64()).map(|s| s as usize).unwrap_or(0);
-		let sector_size = map.get("phy-sec").and_then(|v| v.as_u64()).map(DiskSize::Literal);
-		let read_only = map.get("ro").and_then(|v| v.as_bool()).unwrap_or(false);
-		let status = PartStatus::Exists; // lsblk does not provide status directly; assume existing
+#[derive(Clone,Debug)]
+pub struct Partition {
+	id: u64,
+	start: u64, // sectors
+	size: u64, // also sectors
+	sector_size: u64, // bytes
+	status: PartStatus,
+	name: Option<String>,
+	fs_type: Option<String>,
+	mount_point: Option<String>,
+	ro: bool,
+	label: Option<String>,
+	flags: Vec<String>
+}
 
-		let flags = vec![]; // lsblk does not provide mount options directly
-
+impl Partition {
+	pub fn new(
+		start: u64,
+		size: u64,
+		sector_size: u64,
+		status: PartStatus,
+		name: Option<String>,
+		fs_type: Option<String>,
+		mount_point: Option<String>,
+		label: Option<String>,
+		ro: bool,
+		flags: Vec<String>
+	) -> Self {
 		Self {
-			id: get_entry_id(device.clone(), start as u64, size.as_bytes(DiskSize::Literal(u64::MAX)), None),
-			status,
-			device,
-			label,
-			entry_type,
-			size,
+			id: get_entry_id(),
 			start,
+			sector_size,
+			size,
+			status,
+			name,
 			fs_type,
 			mount_point,
-			flags,
-			sector_size,
-			parent,
-			read_only,
+			label,
+			ro,
+			flags
 		}
+	}
+	pub fn id(&self) -> u64 {
+		self.id
+	}
+	pub fn name(&self) -> Option<&str> {
+		self.name.as_deref()
+	}
+	pub fn set_name<S: Into<String>>(&mut self, name: S) {
+		self.name = Some(name.into());
+	}
+	pub fn start(&self) -> u64 {
+		self.start
+	}
+	pub fn end(&self) -> u64 {
+		self.start + self.size
+	}
+	pub fn set_start(&mut self, start: u64) {
+		self.start = start;
+	}
+	pub fn size(&self) -> u64 {
+		self.size
+	}
+	pub fn set_size(&mut self, size: u64) {
+		self.size = size;
+	}
+	pub fn status(&self) -> &PartStatus {
+		&self.status
+	}
+	pub fn set_status(&mut self, status: PartStatus) {
+		self.status = status;
+	}
+	pub fn fs_type(&self) -> Option<&str> {
+		self.fs_type.as_deref()
+	}
+	pub fn set_fs_type<S: Into<String>>(&mut self, fs_type: S) {
+		self.fs_type = Some(fs_type.into());
+	}
+	pub fn mount_point(&self) -> Option<&str> {
+		self.mount_point.as_deref()
+	}
+	pub fn set_mount_point<S: Into<String>>(&mut self, mount_point: S) {
+		self.mount_point = Some(mount_point.into());
+	}
+	pub fn label(&self) -> Option<&str> {
+		self.label.as_deref()
+	}
+	pub fn set_label<S: Into<String>>(&mut self, label: S) {
+		self.label = Some(label.into());
+	}
+	pub fn flags(&self) -> &[String] {
+		&self.flags
+	}
+	pub fn add_flag<S: Into<String>>(&mut self, flag: S) {
+		let flag_str = flag.into();
+		if !self.flags.contains(&flag_str) {
+			self.flags.push(flag_str);
+		}
+	}
+	pub fn add_flags(&mut self, flags: impl Iterator<Item = impl Into<String>>) {
+		for flag in flags {
+			let flag = flag.into();
+			if !self.flags.contains(&flag) {
+				self.flags.push(flag);
+			}
+		}
+	}
+	pub fn remove_flag<S: AsRef<str>>(&mut self, flag: S) {
+		self.flags.retain(|f| f != flag.as_ref());
+	}
+	pub fn remove_flags<S: AsRef<str>>(&mut self, flags: impl Iterator<Item = S>) {
+		let flag_set: Vec<String> = flags.map(|f| f.as_ref().to_string()).collect();
+		self.flags.retain(|f| !flag_set.contains(f));
+	}
+	pub fn size_bytes(&self, sector_size: u64) -> u64 {
+		self.size * sector_size
+	}
+}
+
+pub struct PartitionBuilder {
+	start: Option<u64>,
+	size: Option<u64>,
+	sector_size: Option<u64>,
+	status: PartStatus,
+	name: Option<String>,
+	fs_type: Option<String>,
+	mount_point: Option<String>,
+	label: Option<String>,
+	ro: Option<bool>,
+	flags: Vec<String>
+}
+
+impl PartitionBuilder {
+	pub fn new() -> Self {
+		Self {
+			start: None,
+			size: None,
+			sector_size: None,
+			status: PartStatus::Unknown,
+			name: None,
+			fs_type: None,
+			mount_point: None,
+			label: None,
+			ro: None,
+			flags: vec![]
+		}
+	}
+	pub fn start(mut self, start: u64) -> Self {
+		self.start = Some(start);
+		self
+	}
+	pub fn size(mut self, size: u64) -> Self {
+		self.size = Some(size);
+		self
+	}
+	pub fn sector_size(mut self, sector_size: u64) -> Self {
+		self.sector_size = Some(sector_size);
+		self
+	}
+	pub fn status(mut self, status: PartStatus) -> Self {
+		self.status = status;
+		self
+	}
+	pub fn fs_type<S: Into<String>>(mut self, fs_type: S) -> Self {
+		self.fs_type = Some(fs_type.into());
+		self
+	}
+	pub fn mount_point<S: Into<String>>(mut self, mount_point: S) -> Self {
+		self.mount_point = Some(mount_point.into());
+		self
+	}
+	pub fn read_only(mut self, ro: bool) -> Self {
+		self.ro = Some(ro);
+		self
+	}
+	pub fn label<S: Into<String>>(mut self, label: S) -> Self {
+		self.label = Some(label.into());
+		self
+	}
+	pub fn add_flag<S: Into<String>>(mut self, flag: S) -> Self {
+		let flag_str = flag.into();
+		if !self.flags.contains(&flag_str) {
+			self.flags.push(flag_str);
+		}
+		self
+	}
+	pub fn build(self) -> anyhow::Result<Partition> {
+		let start = self.start.ok_or_else(|| anyhow::anyhow!("start is required"))?;
+		let size = self.size.ok_or_else(|| anyhow::anyhow!("size is required"))?;
+		let sector_size = self.sector_size.unwrap_or(512); // default to 512 if not specified
+		let mount_point = self.mount_point.ok_or_else(|| anyhow::anyhow!("mount_point is required"))?;
+		let ro = self.ro.unwrap_or(false);
+		if size == 0 {
+			return Err(anyhow::anyhow!("size must be greater than zero"));
+		}
+		let id = get_entry_id();
+		Ok(Partition {
+			id,
+			start,
+			size,
+			sector_size,
+			status: self.status,
+			name: self.name,
+			fs_type: self.fs_type,
+			mount_point: Some(mount_point),
+			label: self.label,
+			ro,
+			flags: self.flags
+		})
 	}
 }
 
@@ -476,8 +762,9 @@ impl DiskEntry {
 pub enum DiskTableHeader {
 	Status,
 	Device,
+	Start,
+	End,
 	Label,
-	Type,
 	Size,
 	FSType,
 	MountPoint,
@@ -488,15 +775,16 @@ pub enum DiskTableHeader {
 impl DiskTableHeader {
 	pub fn header_info(&self) -> (String, Constraint) {
 		match self {
-			DiskTableHeader::Status => ("Status".into(), Constraint::Percentage(7)),
-			DiskTableHeader::Device => ("Device".into(), Constraint::Percentage(17)),
-			DiskTableHeader::Label => ("Label".into(), Constraint::Percentage(6)),
-			DiskTableHeader::Type => ("Type".into(), Constraint::Percentage(10)),
-			DiskTableHeader::Size => ("Size".into(), Constraint::Percentage(10)),
-			DiskTableHeader::FSType => ("FS Type".into(), Constraint::Percentage(10)),
-			DiskTableHeader::MountPoint => ("Mount Point".into(), Constraint::Percentage(10)),
-			DiskTableHeader::Flags => ("Flags".into(), Constraint::Percentage(10)),
-			DiskTableHeader::ReadOnly => ("Read Only".into(), Constraint::Percentage(10)),
+			DiskTableHeader::Status => ("Status".into(), Constraint::Min(10)),
+			DiskTableHeader::Device => ("Device".into(), Constraint::Min(11)),
+			DiskTableHeader::Label => ("Label".into(), Constraint::Min(15)),
+			DiskTableHeader::Start => ("Start".into(), Constraint::Min(22)),
+			DiskTableHeader::End => ("End".into(), Constraint::Min(22)),
+			DiskTableHeader::Size => ("Size".into(), Constraint::Min(11)),
+			DiskTableHeader::FSType => ("FS Type".into(), Constraint::Min(7)),
+			DiskTableHeader::MountPoint => ("Mount Point".into(), Constraint::Min(15)),
+			DiskTableHeader::Flags => ("Flags".into(), Constraint::Min(20)),
+			DiskTableHeader::ReadOnly => ("Read Only".into(), Constraint::Min(21)),
 		}
 	}
 	pub fn all_headers() -> Vec<Self> {
@@ -504,7 +792,8 @@ impl DiskTableHeader {
 			DiskTableHeader::Status,
 			DiskTableHeader::Device,
 			DiskTableHeader::Label,
-			DiskTableHeader::Type,
+			DiskTableHeader::Start,
+			DiskTableHeader::End,
 			DiskTableHeader::Size,
 			DiskTableHeader::FSType,
 			DiskTableHeader::MountPoint,
@@ -512,296 +801,33 @@ impl DiskTableHeader {
 			DiskTableHeader::ReadOnly,
 		]
 	}
+	pub fn partition_table_headers() -> Vec<Self> {
+		vec![
+			DiskTableHeader::Status,
+			DiskTableHeader::Device,
+			DiskTableHeader::Label,
+			DiskTableHeader::Start,
+			DiskTableHeader::End,
+			DiskTableHeader::Size,
+			DiskTableHeader::FSType,
+			DiskTableHeader::MountPoint,
+			DiskTableHeader::Flags,
+		]
+	}
+	pub fn disk_table_headers() -> Vec<Self> {
+		vec![
+			DiskTableHeader::Device,
+			DiskTableHeader::Size,
+			DiskTableHeader::ReadOnly,
+		]
+	}
+	pub fn disk_table_header_info() -> Vec<(String, Constraint)> {
+		Self::disk_table_headers().iter().map(|h| h.header_info()).collect()
+	}
+	pub fn partition_table_header_info() -> Vec<(String, Constraint)> {
+		Self::partition_table_headers().iter().map(|h| h.header_info()).collect()
+	}
 	pub fn all_header_info() -> Vec<(String, Constraint)> {
 		Self::all_headers().iter().map(|h| h.header_info()).collect()
-	}
-}
-
-#[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub enum EntryType {
-	Disk,
-	Partition,
-	FreeSpace
-}
-
-#[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub enum PartStatus {
-	Exists, // Existing partition, no changes
-	Modify, // Existing partition, will be modified (e.g. resized, reformatted)
-	Delete, // Existing partition, will be deleted
-	Create, // New partition
-	Unknown // Unknown status
-}
-
-impl Display for PartStatus {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		match self {
-			PartStatus::Exists => write!(f, "existing"),
-			PartStatus::Modify => write!(f, "modify"),
-			PartStatus::Delete => write!(f, "delete"),
-			PartStatus::Create => write!(f, "create"),
-			PartStatus::Unknown => write!(f, "unknown"),
-		}
-	}
-}
-
-#[derive(Clone,Debug)]
-pub struct DiskPlanBuilder {
-	pub device: Option<DiskEntry>,
-	pub part_table: Option<String>,
-	pub fs: Option<String>,
-	pub layout: Vec<DiskEntry>,
-}
-
-impl Default for DiskPlanBuilder {
-	fn default() -> Self {
-		Self::new()
-	}
-}
-
-impl DiskPlanBuilder {
-	pub fn new() -> Self {
-		Self {
-			device: None,
-			part_table: None,
-			fs: None,
-			layout: vec![],
-		}
-	}
-	pub fn manual_config_table(&mut self) -> anyhow::Result<DiskTable> {
-		if self.device.is_none() {
-			return Err(anyhow::anyhow!("Device must be set to generate manual config table"));
-		};
-		let mut table_rows = vec![self.device.clone().unwrap()];
-		let mut old_rows = self.layout.clone();
-		table_rows.extend(old_rows);
-		let mut disk_table = DiskTable::new(table_rows).with_free_space().filter_by(|d| matches!(d.entry_type, EntryType::Partition | EntryType::FreeSpace));
-		disk_table.consolidate_free_space();
-		self.layout = disk_table.entries().to_vec();
-		Ok(disk_table)
-	}
-	pub fn set_part_flag(&mut self, part_id: u64, flag: &str, enabled: bool) {
-		if let Some(idx) = self.pos_by_id(part_id) {
-			if enabled {
-				if !self.layout[idx].flags.contains(&flag.to_string()) {
-					self.layout[idx].flags.push(flag.to_string());
-				}
-			} else {
-				self.layout[idx].flags.retain(|f| f != flag);
-			}
-		}
-	}
-	pub fn insert_new_entry(&mut self, new_entry: DiskEntry) {
-		// We have to find the first entry that has a 'start' field greater than new_entry.start
-		// And insert new_entry before that entry
-		let pos = self.layout.iter().position(|e| e.start > new_entry.start);
-		match pos {
-			Some(idx) => self.layout.insert(idx, new_entry),
-			None => self.layout.push(new_entry),
-		}
-	}
-	pub fn set_part_mount_point(&mut self, part_id: u64, mount_point: &str) {
-		if let Some(idx) = self.pos_by_id(part_id) {
-			self.layout[idx].mount_point = Some(mount_point.to_string());
-			let flags = [ "boot".to_string(), "esp".to_string() ];
-			if mount_point == "/boot" || mount_point == "/boot/" {
-				for flag in flags {
-					if !self.layout[idx].flags.contains(&flag) {
-						self.layout[idx].flags.push(flag);
-					}
-				}
-			} else {
-				for flag in flags {
-					self.layout[idx].flags.retain(|f| f != &flag);
-				}
-			}
-		}
-	}
-	pub fn find_by_id(&self, part_id: u64) -> Option<&DiskEntry> {
-		self.layout.iter().find(|p| p.id == part_id)
-	}
-	pub fn find_by_id_mut(&mut self, part_id: u64) -> Option<&mut DiskEntry> {
-		self.layout.iter_mut().find(|p| p.id == part_id)
-	}
-	pub fn pos_by_id(&self, part_id: u64) -> Option<usize> {
-		self.layout.iter().position(|p| p.id == part_id)
-	}
-	pub fn set_part_label(&mut self, part_id: u64, label: &str) {
-		if let Some(idx) = self.pos_by_id(part_id) {
-			self.layout[idx].label = Some(label.to_string());
-		}
-	}
-	pub fn set_part_fs_type(&mut self, part_id: u64, fs_type: &str) {
-		if let Some(idx) = self.pos_by_id(part_id) {
-			self.layout[idx].fs_type = Some(fs_type.to_string());
-		}
-	}
-	pub fn mark_part_as_modify(&mut self, part_id: u64) {
-		if let Some(idx) = self.pos_by_id(part_id) {
-			if self.layout.get(idx).unwrap().status == PartStatus::Exists {
-				self.layout[idx].status = PartStatus::Modify;
-			}
-		}
-	}
-	pub fn unmark_part_as_modify(&mut self, part_id: u64) {
-		// It's not enough to just change the status flag
-		// We need to completely roll back any changes that have occurred
-		let Some(part_orig_state) = DiskTable::from_lsblk().unwrap()
-			.find_by(|d| d.id == part_id) else { return };
-		if let Some(idx) = self.pos_by_id(part_id) {
-			self.layout[idx] = part_orig_state;
-		}
-	}
-	pub fn delete_partition(&mut self, part_id: u64) {
-		if let Some(idx) = self.pos_by_id(part_id) {
-			self.layout[idx].mount_point = None;
-
-			self.layout[idx].status = PartStatus::Create;
-			self.layout[idx].device = "-".to_string();
-			self.layout[idx].fs_type = None;
-			self.layout[idx].flags.clear();
-			self.layout[idx].label = None;
-			self.layout[idx].entry_type = EntryType::FreeSpace;
-			self.layout[idx].read_only = true;
-		}
-	}
-	pub fn device(mut self, device: DiskEntry) -> Self {
-		self.device = Some(device);
-		self
-	}
-	pub fn set_default_layout(&mut self, fs: String) {
-		let DiskTable(layout) = DiskTable::default_layout(&self.device.clone().as_ref().unwrap().device, fs);
-		self.layout = layout;
-	}
-	pub fn set_device(&mut self, device: DiskEntry) -> &mut Self {
-		self.device = Some(device);
-		self
-	}
-	pub fn part_table(mut self, part_table: &str) -> Self {
-		self.part_table = Some(part_table.to_string());
-		self
-	}
-	pub fn set_part_table(&mut self, part_table: &str) -> &mut Self {
-		self.part_table = Some(part_table.to_string());
-		self
-	}
-	pub fn fs(mut self, fs: &str) -> Self {
-		self.fs = Some(fs.to_string());
-		self
-	}
-	pub fn set_fs(&mut self, fs: &str) -> &mut Self {
-		self.fs = Some(fs.to_string());
-		self
-	}
-	pub fn layout(mut self, layout: Vec<DiskEntry>) -> Self {
-		self.layout = layout;
-		self
-	}
-	pub fn set_layout(&mut self, layout: Vec<DiskEntry>) -> &mut Self {
-		self.layout = layout;
-		self
-	}
-	pub fn push_partition(mut self, partition: DiskEntry) -> Self {
-		self.layout.push(partition);
-		self
-	}
-	pub fn clear_layout(mut self) -> Self {
-		self.layout.clear();
-		self
-	}
-	pub fn build_default(mut self) -> anyhow::Result<DiskPlan> {
-		let device = self.device.ok_or_else(|| anyhow::anyhow!("device is required for auto plan"))?;
-		let part_table = self.part_table.ok_or_else(|| anyhow::anyhow!("part_table is required for auto plan"))?;
-		let fs = self.fs.ok_or_else(|| anyhow::anyhow!("fs is required for auto plan"))?;
-		for part in self.layout.iter_mut() {
-			if part.entry_type == EntryType::Partition {
-				part.status = PartStatus::Delete;
-			}
-		}
-		let default = DiskTable::default_layout(&device.device, fs);
-		let default_entries = default.entries();
-		self.layout.extend(default_entries.iter().cloned());
-		let layout = self.layout.clone();
-		Ok(DiskPlan { device, part_table, layout })
-	}
-	pub fn build_manual(self) -> anyhow::Result<DiskPlan> {
-		let device = self.device.ok_or_else(|| anyhow::anyhow!("device is required for manual plan"))?;
-		let part_table = self.part_table.ok_or_else(|| anyhow::anyhow!("part_table is required for manual plan"))?;
-		let layout = self.layout;
-		Ok(DiskPlan { device, part_table, layout })
-	}
-}
-
-
-#[derive(Debug)]
-pub struct DiskPlan {
-	pub device: DiskEntry,
-	pub part_table: String,
-	pub layout: Vec<DiskEntry>
-}
-
-impl DiskPlan {
-	pub fn into_disko_config(&self) -> anyhow::Result<String> {
-		let raw = self.fmt_disk();
-		println!("Generated disko config:\n{raw}");
-		fmt_nix(raw)
-	}
-	pub fn as_table(&self) -> anyhow::Result<TableWidget> {
-		let mut table_rows = vec![self.device.clone()];
-		table_rows.extend(self.layout.clone());
-		let disk_table = DiskTable::new(table_rows);
-		Ok(disk_table.as_widget(Some(DiskTableHeader::all_headers())))
-	}
-	fn fmt_disk(&self) -> String {
-		let disk_attrs = attrset! {
-			type = nixstr("disk");
-			device = nixstr(&self.device.device);
-			content = self.fmt_content();
-		};
-		attrset! { disk = disk_attrs; }
-	}
-	fn fmt_content(&self) -> String {
-		attrset! {
-			type = nixstr(&self.part_table);
-			partitions = self.fmt_partitions();
-		}
-	}
-	fn fmt_partitions(&self) -> String {
-		// We unfortunately cannot use attrset! to easily generate this part, since the partition names are dynamic, and there are a varying number of partitions
-		// so we have to build this one by hand here
-		let mut attrset = "{ ".to_string();
-		for part in &self.layout {
-			let name = part.device.clone();
-			let mut part_attrs = attrset! {
-				size = nixstr(part.size);
-				content = attrset! {
-					type = nixstr("gpt");
-					format = nixstr(part.fs_type.clone().unwrap());
-					mountpoint = nixstr(part.mount_point.clone().unwrap());
-				};
-			};
-			if !part.flags.is_empty() {
-				let mut flags = String::new();
-				flags.push_str("[ ");
-				for flag in &part.flags {
-					flags.push_str(&format!("\"{flag}\" "));
-				}
-				flags.push(']');
-				let flag_attrset = attrset! {
-					flags = flags;
-				};
-				part_attrs = merge_attrs!(part_attrs, flag_attrset);
-			}
-			if let Some(label) = &part.label {
-				let label_attrset = attrset! {
-					label = nixstr(label);
-				};
-				part_attrs = merge_attrs!(part_attrs, label_attrset);
-			}
-			let attr = format!("{name} = {part_attrs};");
-			attrset.push_str(&attr);
-		}
-		attrset.push_str(" }");
-		attrset
 	}
 }
