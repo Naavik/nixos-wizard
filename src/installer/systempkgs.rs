@@ -3,7 +3,7 @@ use std::{cell::LazyCell, collections::HashSet, fs, process::Command, sync::Lazy
 use ratatui::{crossterm::event::KeyCode, layout::Constraint, text::Line};
 use serde_json::Value;
 
-use crate::{installer::{Installer, Page, Signal}, styled_block, widget::{ConfigWidget, LineEditor, StrList, TableWidget}};
+use crate::{installer::{Installer, Page, Signal}, styled_block, widget::{ConfigWidget, HelpModal, LineEditor, StrList, TableWidget}};
 
 use std::{
     sync::{Arc, RwLock},
@@ -63,7 +63,8 @@ pub fn fetch_nixpkgs() -> anyhow::Result<Vec<String>> {
 pub struct SystemPackages {
 	selected: StrList,
 	available: StrList,
-	search_bar: LineEditor
+	search_bar: LineEditor,
+	help_modal: HelpModal<'static>,
 }
 
 impl SystemPackages {
@@ -74,10 +75,24 @@ impl SystemPackages {
 		let search_bar = LineEditor::new("Search", Some("Enter a package name..."));
 		selected.sort();
 		available.sort();
+		let help_content = styled_block(vec![
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Tab"), (None, " - Switch between lists and search")],
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate package lists")],
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Enter"), (None, " - Add/remove package to/from selection")],
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "/"), (None, " - Focus search bar")],
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Esc"), (None, " - Return to main menu")],
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Search for packages in the available list, then press Enter")],
+			vec![(None, "to add them to your selection. Selected packages will be")],
+			vec![(None, "installed on your NixOS system.")],
+		]);
+		let help_modal = HelpModal::new("System Packages", help_content);
 		Self {
 			selected,
 			available,
-			search_bar
+			search_bar,
+			help_modal
 		}
 	}
 	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
@@ -144,9 +159,27 @@ impl Page for SystemPackages {
 		self.selected.render(f, vert_chunks_left[1]);
 		self.search_bar.render(f, vert_chunks_right[0]);
 		self.available.render(f, vert_chunks_right[1]);
+		
+		// Render help modal on top
+		self.help_modal.render(f, area);
 	}
 
 	fn handle_input(&mut self, installer: &mut super::Installer, event: ratatui::crossterm::event::KeyEvent) -> super::Signal {
+		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				return super::Signal::Wait;
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				return super::Signal::Wait;
+			}
+			_ if self.help_modal.visible => {
+				return super::Signal::Wait;
+			}
+			_ => {}
+		}
+		
 		if event.code == KeyCode::Char('/') && !self.search_bar.is_focused() {
 			self.search_bar.focus();
 			self.available.unfocus();
@@ -242,5 +275,21 @@ impl Page for SystemPackages {
 			self.focus_available();
 			Signal::Wait
 		}
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Tab"), (None, " - Switch between lists and search")],
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate package lists")],
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Enter"), (None, " - Add/remove package to/from selection")],
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "/"), (None, " - Focus search bar")],
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Esc"), (None, " - Return to main menu")],
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Search for packages in the available list, then press Enter")],
+			vec![(None, "to add them to your selection. Selected packages will be")],
+			vec![(None, "installed on your NixOS system.")],
+		]);
+		("System Packages".to_string(), help_content)
 	}
 }

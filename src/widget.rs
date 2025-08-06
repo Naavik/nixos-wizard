@@ -1,6 +1,6 @@
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use itertools::Itertools;
-use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Alignment, Constraint, Layout, Rect}, style::{Color, Modifier, Style}, text::{Line, Span}, widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Table, TableState, Widget}, Frame};
+use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Alignment, Constraint, Layout, Rect}, style::{Color, Modifier, Style}, text::{Line, Span}, widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Table, TableState, Widget}, Frame};
 use serde_json::Value;
 
 use crate::installer::Signal;
@@ -502,14 +502,22 @@ impl LineEditor {
 			}
 		}
 
-		Line::from(vec![
-			Span::raw(left),
-			Span::styled(
-				cursor_char.map_or(" ".to_string(), |c| c.to_string()),
-				Style::default().add_modifier(Modifier::REVERSED),
-			),
-			Span::raw(right),
-		])
+		if self.focused {
+			Line::from(vec![
+				Span::raw(left),
+				Span::styled(
+					cursor_char.map_or(" ".to_string(), |c| c.to_string()),
+					Style::default().add_modifier(Modifier::REVERSED),
+				),
+				Span::raw(right),
+			])
+		} else {
+			Line::from(vec![
+				Span::raw(left),
+				Span::raw(cursor_char.map_or(" ".to_string(), |c| c.to_string())),
+				Span::raw(right),
+			])
+		}
 	}
 	fn as_widget(&self) -> Paragraph {
 		Paragraph::new(self.render_line())
@@ -1067,5 +1075,69 @@ impl ConfigWidget for TableWidget {
 			.highlight_symbol(">> ");
 
 		f.render_stateful_widget(table, area, &mut state);
+	}
+}
+
+pub struct HelpModal<'a> {
+	pub visible: bool,
+	pub title: String,
+	pub content: Vec<Line<'a>>,
+}
+
+impl<'a> HelpModal<'a> {
+	pub fn new(title: impl Into<String>, content: Vec<Line<'a>>) -> Self {
+		Self {
+			visible: false,
+			title: title.into(),
+			content,
+		}
+	}
+
+	pub fn show(&mut self) {
+		self.visible = true;
+	}
+
+	pub fn hide(&mut self) {
+		self.visible = false;
+	}
+
+	pub fn toggle(&mut self) {
+		self.visible = !self.visible;
+	}
+
+	pub fn render(&self, f: &mut Frame, area: Rect) {
+		if !self.visible {
+			return;
+		}
+
+		// Calculate popup size - 80% of screen
+		let popup_width = (area.width as f32 * 0.8) as u16;
+		let popup_height = (area.height as f32 * 0.8) as u16;
+		let x = (area.width.saturating_sub(popup_width)) / 2;
+		let y = (area.height.saturating_sub(popup_height)) / 2;
+
+		let popup_area = Rect {
+			x: area.x + x,
+			y: area.y + y,
+			width: popup_width,
+			height: popup_height,
+		};
+
+		// Clear the popup area to remove background content
+		f.render_widget(Clear, popup_area);
+
+		// Render the help content
+		let help_paragraph = Paragraph::new(self.content.clone())
+			.block(
+				Block::default()
+					.title(format!("Help: {} (Press ? or ESC to close)", self.title))
+					.borders(Borders::ALL)
+					.border_style(Style::default().fg(Color::Yellow))
+					.style(Style::default().bg(Color::Black))
+			)
+			.style(Style::default().bg(Color::Black).fg(Color::White))
+			.wrap(ratatui::widgets::Wrap { trim: true });
+
+		f.render_widget(help_paragraph, popup_area);
 	}
 }

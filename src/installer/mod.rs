@@ -3,9 +3,10 @@ use std::{fmt::{Debug, Display}, io::Write, process::{Command, Stdio}};
 use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Constraint, Direction, Layout, Rect}, style::{Color, Modifier}, text::Line, Frame};
 use serde_json::Value;
 
-use crate::{drives::{part_table, Disk, DiskItem}, installer::{systempkgs::NIXPKGS, users::User}, styled_block, widget::{Button, CheckBox, ConfigWidget, InfoBox, LineEditor, StrList, WidgetBox, WidgetBoxBuilder}};
+use crate::{drives::{part_table, Disk, DiskItem}, installer::{systempkgs::NIXPKGS, users::User}, styled_block, widget::{Button, CheckBox, ConfigWidget, HelpModal, InfoBox, LineEditor, StrList, WidgetBox, WidgetBoxBuilder}};
 
 const HIGHLIGHT: Option<(Color,Modifier)> = Some((Color::Yellow, Modifier::BOLD));
+
 
 pub mod drivepages;
 pub mod users;
@@ -94,6 +95,9 @@ impl Debug for Signal {
 pub trait Page {
 	fn render(&mut self, installer: &mut Installer, f: &mut Frame, area: Rect);
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal;
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		("Help".to_string(), vec![Line::from("No help available for this page.")])
+	}
 }
 
 
@@ -176,7 +180,8 @@ impl Display for MenuPages {
 
 pub struct Menu {
 	menu_items: StrList,
-	button_row: WidgetBox
+	button_row: WidgetBox,
+	help_modal: HelpModal<'static>,
 }
 
 impl Menu {
@@ -191,7 +196,19 @@ impl Menu {
 			.children(buttons)
 			.build();
 		menu_items.focus();
-		Self { menu_items, button_row }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate menu options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select and configure option")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Tab, End, G"), (None, " - Move to action buttons")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Home, g"), (None, " - Return to menu options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "q"), (None, " - Quit installer")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Required options are shown in red when not configured.")],
+			vec![(None, "Configure all required options before proceeding.")],
+		]);
+		let help_modal = HelpModal::new("Main Menu", help_content);
+		Self { menu_items, button_row, help_modal }
 	}
 	pub fn info_box_for_item(&self, installer: &mut Installer, idx: usize) -> WidgetBox {
 		let mut display_widget: Option<Box<dyn ConfigWidget>> = None;
@@ -380,9 +397,39 @@ impl Page for Menu {
 			Box::new(self.remaining_requirements(installer)) as Box<dyn ConfigWidget>
 		};
 		info_box.render(f, right_chunks[0]);
+
+		// Render help modal on top of everything
+		self.help_modal.render(f, area);
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate menu options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select and configure option")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Tab, End, G"), (None, " - Move to action buttons")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Home, g"), (None, " - Return to menu options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "q"), (None, " - Quit installer")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Required options are shown in red when not configured.")],
+			vec![(None, "Configure all required options before proceeding.")],
+		]);
+		("Main Menu".to_string(), help_content)
 	}
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				// Help modal is open, don't process other inputs
+				Signal::Wait
+			}
 			KeyCode::Char('q') => Signal::Quit,
 			KeyCode::Home | KeyCode::Char('g') => {
 				if self.menu_items.is_focused() {
@@ -562,14 +609,29 @@ impl Page for Menu {
 */
 
 pub struct SourceFlake {
-	pub input: LineEditor
+	pub input: LineEditor,
+	help_modal: HelpModal<'static>,
 }
 
 impl SourceFlake {
 	pub fn new() -> Self {
 		let mut input = LineEditor::new("Source Config Flake", Some("e.g. '/path/to/flake#my-host' or 'github:user/repo#my-host'"));
 		input.focus();
-		Self { input  }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Save configuration and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "←/→"), (None, " - Move cursor")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Home/End"), (None, " - Jump to beginning/end")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Backspace/Del"), (None, " - Delete characters")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Enter a flake path to use as system configuration source.")],
+			vec![(None, "Examples:")],
+			vec![(None, "  /path/to/flake#my-host")],
+			vec![(None, "  github:user/repo#my-host")],
+		]);
+		let help_modal = HelpModal::new("Source Flake", help_content);
+		Self { input, help_modal }
 	}
 	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
 		installer.flake_path.clone().map(|s| {
@@ -642,10 +704,41 @@ impl Page for SourceFlake {
 
 		info_box.render(f, chunks[0]);
 		self.input.render(f, hor_chunks[1]);
+		
+		// Render help modal on top
+		self.help_modal.render(f, area);
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Save configuration and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "←/→"), (None, " - Move cursor")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Home/End"), (None, " - Jump to beginning/end")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Backspace/Del"), (None, " - Delete characters")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Enter a flake path to use as system configuration source.")],
+			vec![(None, "Examples:")],
+			vec![(None, "  /path/to/flake#my-host")],
+			vec![(None, "  github:user/repo#my-host")],
+		]);
+		("Source Flake".to_string(), help_content)
 	}
 
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
 			KeyCode::Esc => Signal::Pop,
 			KeyCode::Enter => {
 				let flake_path = self.input.get_value().unwrap().as_str().unwrap().trim().to_string();
@@ -658,7 +751,8 @@ impl Page for SourceFlake {
 }
 
 pub struct Language {
-	langs: StrList
+	langs: StrList,
+	help_modal: HelpModal<'static>,
 }
 
 impl Language {
@@ -671,7 +765,16 @@ impl Language {
 		.collect::<Vec<_>>();
 		let mut langs = StrList::new("Select Language", languages);
 		langs.focus();
-		Self { langs }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate language options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select language and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the language to be used for your system.")],
+		]);
+		let help_modal = HelpModal::new("Language", help_content);
+		Self { langs, help_modal }
 	}
 	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
 		installer.language.clone().map(|s| {
@@ -711,10 +814,34 @@ impl Page for Language {
 			)
 			.split(area);
 		self.langs.render(f, chunks[0]);
+		self.help_modal.render(f, area);
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate language options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select language and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the language to be used for your system.")],
+		]);
+		("Language".to_string(), help_content)
 	}
 
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
 			KeyCode::Esc => Signal::Pop,
 			KeyCode::Char('q') => Signal::Pop,
 			KeyCode::Enter => {
@@ -727,7 +854,8 @@ impl Page for Language {
 }
 
 pub struct KeyboardLayout {
-	layouts: StrList
+	layouts: StrList,
+	help_modal: HelpModal<'static>,
 }
 
 impl KeyboardLayout {
@@ -761,7 +889,16 @@ impl KeyboardLayout {
 		.collect::<Vec<_>>();
 		let mut layouts = StrList::new("Select Keyboard Layout", layouts);
 		layouts.focus();
-		Self { layouts }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate keyboard layout options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select keyboard layout and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Choose the keyboard layout that matches your physical keyboard.")],
+		]);
+		let help_modal = HelpModal::new("Keyboard Layout", help_content);
+		Self { layouts, help_modal }
 	}
 	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
 		installer.keyboard_layout.clone().map(|s| {
@@ -801,10 +938,34 @@ impl Page for KeyboardLayout {
 			)
 			.split(area);
 		self.layouts.render(f, chunks[0]);
+		self.help_modal.render(f, area);
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate keyboard layout options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select keyboard layout and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Choose the keyboard layout that matches your physical keyboard.")],
+		]);
+		("Keyboard Layout".to_string(), help_content)
 	}
 
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
 			KeyCode::Esc => Signal::Pop,
 			KeyCode::Char('q') => Signal::Pop,
 			KeyCode::Enter => {
@@ -817,7 +978,8 @@ impl Page for KeyboardLayout {
 }
 
 pub struct Locale {
-	locales: StrList
+	locales: StrList,
+	help_modal: HelpModal<'static>,
 }
 
 impl Locale {
@@ -848,7 +1010,17 @@ impl Locale {
 		.collect::<Vec<_>>();
 		let mut locales = StrList::new("Select Locale", locales);
 		locales.focus();
-		Self { locales }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate locale options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select locale and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Set the locale for your system, which determines")],
+			vec![(None, "language and regional settings.")],
+		]);
+		let help_modal = HelpModal::new("Locale", help_content);
+		Self { locales, help_modal }
 	}
 	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
 		installer.locale.clone().map(|s| {
@@ -888,10 +1060,35 @@ impl Page for Locale {
 			)
 			.split(area);
 		self.locales.render(f, chunks[0]);
+		self.help_modal.render(f, area);
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate locale options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select locale and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Set the locale for your system, which determines")],
+			vec![(None, "language and regional settings.")],
+		]);
+		("Locale".to_string(), help_content)
 	}
 
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
 			KeyCode::Esc => Signal::Pop,
 			KeyCode::Char('q') => Signal::Pop,
 			KeyCode::Enter => {
@@ -904,7 +1101,8 @@ impl Page for Locale {
 }
 
 pub struct EnableFlakes {
-	buttons: WidgetBox
+	buttons: WidgetBox,
+	help_modal: HelpModal<'static>,
 }
 
 impl EnableFlakes {
@@ -913,7 +1111,17 @@ impl EnableFlakes {
 		let back_btn = Button::new("Back");
 		let mut buttons = WidgetBox::button_menu(vec![Box::new(toggle),Box::new(back_btn)]);
 		buttons.focus();
-		Self { buttons }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Toggle option or select Back")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Enable or disable experimental Nix flakes support.")],
+			vec![(None, "Flakes provide reproducible builds and easier dependency management.")],
+		]);
+		let help_modal = HelpModal::new("Enable Flakes", help_content);
+		Self { buttons, help_modal }
 	}
 	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
 		let status = if installer.enable_flakes { "enabled" } else { "disabled" };
@@ -976,10 +1184,35 @@ impl Page for EnableFlakes {
 		);
 		info_box.render(f, chunks[0]);
 		self.buttons.render(f, hor_chunks[1]);
+		self.help_modal.render(f, area);
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Toggle option or select Back")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Enable or disable experimental Nix flakes support.")],
+			vec![(None, "Flakes provide reproducible builds and easier dependency management.")],
+		]);
+		("Enable Flakes".to_string(), help_content)
 	}
 
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
 			KeyCode::Esc => Signal::Pop,
 			KeyCode::Char('q') => Signal::Pop,
 			KeyCode::Up | KeyCode::Char('k') => {
@@ -1009,7 +1242,8 @@ impl Page for EnableFlakes {
 }
 
 pub struct Bootloader {
-	loaders: StrList
+	loaders: StrList,
+	help_modal: HelpModal<'static>,
 }
 
 impl Bootloader {
@@ -1025,7 +1259,16 @@ impl Bootloader {
 		.collect::<Vec<_>>();
 		let mut loaders = StrList::new("Select Bootloader", loaders);
 		loaders.focus();
-		Self { loaders }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate bootloader options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select bootloader and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the bootloader responsible for loading the operating system.")],
+		]);
+		let help_modal = HelpModal::new("Bootloader", help_content);
+		Self { loaders, help_modal }
 	}
 	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
 		installer.bootloader.clone().map(|s| {
@@ -1066,10 +1309,34 @@ impl Page for Bootloader {
 			)
 			.split(area);
 		self.loaders.render(f, chunks[0]);
+		self.help_modal.render(f, area);
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate bootloader options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select bootloader and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the bootloader responsible for loading the operating system.")],
+		]);
+		("Bootloader".to_string(), help_content)
 	}
 
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
 			KeyCode::Esc => Signal::Pop,
 			KeyCode::Char('q') => Signal::Pop,
 			KeyCode::Enter => {
@@ -1082,7 +1349,8 @@ impl Page for Bootloader {
 }
 
 pub struct Swap {
-	buttons: WidgetBox
+	buttons: WidgetBox,
+	help_modal: HelpModal<'static>,
 }
 
 impl Swap {
@@ -1091,7 +1359,17 @@ impl Swap {
 		let back_btn = Button::new("Back");
 		let mut buttons = WidgetBox::button_menu(vec![Box::new(toggle),Box::new(back_btn)]);
 		buttons.focus();
-		Self { buttons }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Toggle option or select Back")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Enable or disable swap space for virtual memory.")],
+			vec![(None, "Recommended for systems with less than 8GB RAM.")],
+		]);
+		let help_modal = HelpModal::new("Swap", help_content);
+		Self { buttons, help_modal }
 	}
 	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
 		let status = if installer.use_swap { "enabled" } else { "disabled" };
@@ -1156,9 +1434,34 @@ impl Page for Swap {
 		);
 		info_box.render(f, chunks[0]);
 		self.buttons.render(f, hor_chunks[1]);
+		self.help_modal.render(f, area);
 	}
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Toggle option or select Back")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Enable or disable swap space for virtual memory.")],
+			vec![(None, "Recommended for systems with less than 8GB RAM.")],
+		]);
+		("Swap".to_string(), help_content)
+	}
+
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
 			KeyCode::Esc => Signal::Pop,
 			KeyCode::Char('q') => Signal::Pop,
 			KeyCode::Up | KeyCode::Char('k') => {
@@ -1188,14 +1491,26 @@ impl Page for Swap {
 }
 
 pub struct Hostname {
-	input: LineEditor
+	input: LineEditor,
+	help_modal: HelpModal<'static>,
 }
 
 impl Hostname {
 	pub fn new() -> Self {
 		let mut input = LineEditor::new("Set Hostname", Some("e.g. 'my-computer'"));
 		input.focus();
-		Self { input  }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Save hostname and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "←/→"), (None, " - Move cursor")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Home/End"), (None, " - Jump to beginning/end")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Backspace/Del"), (None, " - Delete characters")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Set a unique hostname for your computer on the network.")],
+		]);
+		let help_modal = HelpModal::new("Hostname", help_content);
+		Self { input, help_modal }
 	}
 	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
 		installer.hostname.clone().map(|s| {
@@ -1262,10 +1577,36 @@ impl Page for Hostname {
 
 		info_box.render(f, chunks[0]);
 		self.input.render(f, hor_chunks[1]);
+		self.help_modal.render(f, area);
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Save hostname and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "←/→"), (None, " - Move cursor")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Home/End"), (None, " - Jump to beginning/end")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Backspace/Del"), (None, " - Delete characters")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Set a unique hostname for your computer on the network.")],
+		]);
+		("Hostname".to_string(), help_content)
 	}
 
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
 			KeyCode::Esc => Signal::Pop,
 			KeyCode::Enter => {
 				let hostname = self.input.get_value().unwrap().as_str().unwrap().trim().to_string();
@@ -1282,6 +1623,7 @@ impl Page for Hostname {
 pub struct RootPassword {
 	input: LineEditor,
 	confirm: LineEditor,
+	help_modal: HelpModal<'static>,
 }
 
 impl RootPassword {
@@ -1289,7 +1631,19 @@ impl RootPassword {
 		let mut input = LineEditor::new("Set Root Password", Some("Password will be hidden")).secret(true);
 		let confirm = LineEditor::new("Confirm Password", Some("Password will be hidden")).secret(true);
 		input.focus();
-		Self { input, confirm  }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Move to next field or save when complete")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Tab"), (None, " - Switch between password fields")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "←/→"), (None, " - Move cursor")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Home/End"), (None, " - Jump to beginning/end")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Backspace/Del"), (None, " - Delete characters")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Set a strong root password for system security.")],
+		]);
+		let help_modal = HelpModal::new("Root Password", help_content);
+		Self { input, confirm, help_modal }
 	}
 	pub fn page_info<'a>() -> (String, Vec<Line<'a>>) {
 		(
@@ -1389,10 +1743,37 @@ impl Page for RootPassword {
 		info_box.render(f, chunks[0]);
 		self.input.render(f, vert_chunks[0]);
 		self.confirm.render(f, vert_chunks[1]);
+		self.help_modal.render(f, area);
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Move to next field or save when complete")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Tab"), (None, " - Switch between password fields")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "←/→"), (None, " - Move cursor")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Home/End"), (None, " - Jump to beginning/end")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Backspace/Del"), (None, " - Delete characters")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Set a strong root password for system security.")],
+		]);
+		("Root Password".to_string(), help_content)
 	}
 
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
 			KeyCode::Esc => Signal::Pop,
 			KeyCode::Tab => {
 				if self.input.is_focused() {
@@ -1451,7 +1832,8 @@ impl Page for RootPassword {
 }
 
 pub struct Profile {
-	profiles: StrList
+	profiles: StrList,
+	help_modal: HelpModal<'static>,
 }
 
 impl Profile {
@@ -1467,7 +1849,16 @@ impl Profile {
 		.collect::<Vec<_>>();
 		let mut profiles = StrList::new("Select Profile", profiles);
 		profiles.focus();
-		Self { profiles }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate profile options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select profile and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select a predefined profile that matches your intended use case.")],
+		]);
+		let help_modal = HelpModal::new("Profile", help_content);
+		Self { profiles, help_modal }
 	}
 	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
 		installer.profile.clone().map(|s| {
@@ -1510,10 +1901,34 @@ impl Page for Profile {
 			)
 			.split(area);
 		self.profiles.render(f, chunks[0]);
+		self.help_modal.render(f, area);
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate profile options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select profile and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select a predefined profile that matches your intended use case.")],
+		]);
+		("Profile".to_string(), help_content)
 	}
 
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
 			KeyCode::Esc => Signal::Pop,
 			KeyCode::Char('q') => Signal::Pop,
 			KeyCode::Enter => {
@@ -1526,7 +1941,8 @@ impl Page for Profile {
 }
 
 pub struct Greeter {
-	greeters: StrList
+	greeters: StrList,
+	help_modal: HelpModal<'static>,
 }
 
 impl Greeter {
@@ -1542,7 +1958,16 @@ impl Greeter {
 		.collect::<Vec<_>>();
 		let mut greeters = StrList::new("Select Greeter", greeters);
 		greeters.focus();
-		Self { greeters }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate greeter options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select greeter and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the display manager for the graphical login screen.")],
+		]);
+		let help_modal = HelpModal::new("Greeter", help_content);
+		Self { greeters, help_modal }
 	}
 	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
 		installer.greeter.clone().map(|s| {
@@ -1583,10 +2008,34 @@ impl Page for Greeter {
 			)
 			.split(area);
 		self.greeters.render(f, chunks[0]);
+		self.help_modal.render(f, area);
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate greeter options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select greeter and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the display manager for the graphical login screen.")],
+		]);
+		("Greeter".to_string(), help_content)
 	}
 
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
 			KeyCode::Esc => Signal::Pop,
 			KeyCode::Char('q') => Signal::Pop,
 			KeyCode::Enter => {
@@ -1599,7 +2048,8 @@ impl Page for Greeter {
 }
 
 pub struct DesktopEnvironment {
-	desktops: StrList
+	desktops: StrList,
+	help_modal: HelpModal<'static>,
 }
 
 impl DesktopEnvironment {
@@ -1620,7 +2070,16 @@ impl DesktopEnvironment {
 		.collect::<Vec<_>>();
 		let mut desktops = StrList::new("Select Desktop Environment", desktops);
 		desktops.focus();
-		Self { desktops }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate desktop environment options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select desktop environment and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the desktop environment for your graphical interface.")],
+		]);
+		let help_modal = HelpModal::new("Desktop Environment", help_content);
+		Self { desktops, help_modal }
 	}
 	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
 		installer.desktop_environment.clone().map(|s| {
@@ -1662,10 +2121,34 @@ impl Page for DesktopEnvironment {
 			)
 			.split(area);
 		self.desktops.render(f, chunks[0]);
+		self.help_modal.render(f, area);
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate desktop environment options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select desktop environment and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the desktop environment for your graphical interface.")],
+		]);
+		("Desktop Environment".to_string(), help_content)
 	}
 
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
 			KeyCode::Esc => Signal::Pop,
 			KeyCode::Char('q') => Signal::Pop,
 			KeyCode::Enter => {
@@ -1678,7 +2161,8 @@ impl Page for DesktopEnvironment {
 }
 
 pub struct Kernels {
-	kernels: StrList
+	kernels: StrList,
+	help_modal: HelpModal<'static>,
 }
 
 impl Kernels {
@@ -1695,7 +2179,16 @@ impl Kernels {
 		.collect::<Vec<_>>();
 		let mut kernels = StrList::new("Select Kernel", kernels);
 		kernels.focus();
-		Self { kernels }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate kernel options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select kernel and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the Linux kernel to optimize system performance.")],
+		]);
+		let help_modal = HelpModal::new("Kernel", help_content);
+		Self { kernels, help_modal }
 	}
 	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
 		installer.kernels.clone().map(|s| {
@@ -1737,10 +2230,34 @@ impl Page for Kernels {
 			)
 			.split(area);
 		self.kernels.render(f, chunks[0]);
+		self.help_modal.render(f, area);
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate kernel options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select kernel and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the Linux kernel to optimize system performance.")],
+		]);
+		("Kernel".to_string(), help_content)
 	}
 
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
 			KeyCode::Esc => Signal::Pop,
 			KeyCode::Char('q') => Signal::Pop,
 			KeyCode::Enter => {
@@ -1754,7 +2271,8 @@ impl Page for Kernels {
 }
 
 pub struct Audio {
-	backends: StrList
+	backends: StrList,
+	help_modal: HelpModal<'static>,
 }
 
 impl Audio {
@@ -1770,7 +2288,16 @@ impl Audio {
 		.collect::<Vec<_>>();
 		let mut backends = StrList::new("Select Audio Backend", backends);
 		backends.focus();
-		Self { backends }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate audio backend options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select audio backend and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the audio management backend for sound devices.")],
+		]);
+		let help_modal = HelpModal::new("Audio", help_content);
+		Self { backends, help_modal }
 	}
 	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
 		installer.audio_backend.clone().map(|s| {
@@ -1812,10 +2339,34 @@ impl Page for Audio {
 			)
 			.split(area);
 		self.backends.render(f, chunks[0]);
+		self.help_modal.render(f, area);
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate audio backend options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select audio backend and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the audio management backend for sound devices.")],
+		]);
+		("Audio".to_string(), help_content)
 	}
 
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
 			KeyCode::Esc => Signal::Pop,
 			KeyCode::Char('q') => Signal::Pop,
 			KeyCode::Enter => {
@@ -1828,7 +2379,8 @@ impl Page for Audio {
 }
 
 pub struct Network {
-	backends: StrList
+	backends: StrList,
+	help_modal: HelpModal<'static>,
 }
 
 impl Network {
@@ -1844,7 +2396,16 @@ impl Network {
 		.collect::<Vec<_>>();
 		let mut backends = StrList::new("Select Network Backend", backends);
 		backends.focus();
-		Self { backends }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate network backend options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select network backend and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the network management backend for connections.")],
+		]);
+		let help_modal = HelpModal::new("Network", help_content);
+		Self { backends, help_modal }
 	}
 	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
 		installer.network_backend.clone().map(|s| {
@@ -1886,10 +2447,34 @@ impl Page for Network {
 			)
 			.split(area);
 		self.backends.render(f, chunks[0]);
+		self.help_modal.render(f, area);
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate network backend options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select network backend and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the network management backend for connections.")],
+		]);
+		("Network".to_string(), help_content)
 	}
 
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
 			KeyCode::Esc => Signal::Pop,
 			KeyCode::Char('q') => Signal::Pop,
 			KeyCode::Enter => {
@@ -1902,7 +2487,8 @@ impl Page for Network {
 }
 
 pub struct Timezone {
-	timezones: StrList
+	timezones: StrList,
+	help_modal: HelpModal<'static>,
 }
 
 impl Timezone {
@@ -1929,7 +2515,16 @@ impl Timezone {
 		.collect::<Vec<_>>();
 		let mut timezones = StrList::new("Select Timezone", timezones);
 		timezones.focus();
-		Self { timezones }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate timezone options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select timezone and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the timezone that matches your physical location.")],
+		]);
+		let help_modal = HelpModal::new("Timezone", help_content);
+		Self { timezones, help_modal }
 	}
 	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
 		installer.timezone.clone().map(|s| {
@@ -1971,10 +2566,34 @@ impl Page for Timezone {
 			)
 			.split(area);
 		self.timezones.render(f, chunks[0]);
+		self.help_modal.render(f, area);
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate timezone options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select timezone and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the timezone that matches your physical location.")],
+		]);
+		("Timezone".to_string(), help_content)
 	}
 
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
 			KeyCode::Esc => Signal::Pop,
 			KeyCode::Char('q') => Signal::Pop,
 			KeyCode::Enter => {

@@ -1,13 +1,14 @@
 use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Constraint, Direction, Layout, Rect}, style::{Color, Modifier}, Frame};
 use serde_json::Value;
 
-use crate::{drives::{bytes_readable, disk_table, lsblk, parse_sectors, part_table, DiskItem, PartStatus, Partition}, installer::{Installer, Page, Signal}, styled_block, widget::{Button, CheckBox, ConfigWidget, InfoBox, LineEditor, TableWidget, WidgetBox}};
+use crate::{drives::{bytes_readable, disk_table, lsblk, parse_sectors, part_table, DiskItem, PartStatus, Partition}, installer::{Installer, Page, Signal}, styled_block, widget::{Button, CheckBox, ConfigWidget, HelpModal, InfoBox, LineEditor, TableWidget, WidgetBox}};
 
 const HIGHLIGHT: Option<(Color,Modifier)> = Some((Color::Yellow, Modifier::BOLD));
 
 pub struct Drives<'a> {
 	pub buttons: WidgetBox,
-	pub info_box: InfoBox<'a>
+	pub info_box: InfoBox<'a>,
+	help_modal: HelpModal<'static>,
 }
 
 impl<'a> Drives<'a> {
@@ -29,7 +30,20 @@ impl<'a> Drives<'a> {
 			])
 		);
 
-		Self { buttons: button_row, info_box }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select drive configuration method")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Return to main menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Choose how to configure your drive for NixOS installation:")],
+			vec![(None, "• Best-effort default - Automatic partitioning (recommended)")],
+			vec![(None, "• Manual configuration - Advanced users only")],
+			vec![(None, "")],
+			vec![(Some((Color::Red, Modifier::BOLD)), "WARNING: "), (None, "All data on the selected drive will be erased!")],
+		]);
+		let help_modal = HelpModal::new("Drive Configuration", help_content);
+		Self { buttons: button_row, info_box, help_modal }
 	}
 }
 
@@ -55,9 +69,23 @@ impl<'a> Page for Drives<'a> {
 
 		self.info_box.render(f, chunks[0]);
 		self.buttons.render(f, chunks[1]);
+		
+		// Render help modal on top
+		self.help_modal.render(f, area);
 	}
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
 			KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
 			KeyCode::Up | KeyCode::Char('k') => {
 				self.buttons.prev_child();
@@ -93,25 +121,67 @@ impl<'a> Page for Drives<'a> {
 			_ => Signal::Wait,
 		}
 	}
+
+	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select drive configuration method")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Return to main menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Choose how to configure your drive for NixOS installation:")],
+			vec![(None, "• Best-effort default - Automatic partitioning (recommended)")],
+			vec![(None, "• Manual configuration - Advanced users only")],
+			vec![(None, "")],
+			vec![(Some((Color::Red, Modifier::BOLD)), "WARNING: "), (None, "All data on the selected drive will be erased!")],
+		]);
+		("Drive Configuration".to_string(), help_content)
+	}
 }
 
 pub struct SelectDrive {
-	table: TableWidget
+	table: TableWidget,
+	help_modal: HelpModal<'static>,
 }
 
 impl SelectDrive {
 	pub fn new(mut table: TableWidget) -> Self {
 		table.focus();
-		Self { table }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate drive list")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select drive for installation")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Return to previous menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the drive you want to use for your NixOS installation.")],
+			vec![(None, "The selected drive will be used for partitioning and formatting.")],
+			vec![(Some((Color::Red, Modifier::BOLD)), "WARNING: "), (None, "All data on the selected drive will be erased!")],
+		]);
+		let help_modal = HelpModal::new("Select Drive", help_content);
+		Self { table, help_modal }
 	}
 }
 
 impl Page for SelectDrive {
 	fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
 		self.table.render(f, area);
+		
+		// Render help modal on top
+		self.help_modal.render(f, area);
 	}
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				return Signal::Wait;
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				return Signal::Wait;
+			}
+			_ if self.help_modal.visible => {
+				return Signal::Wait;
+			}
 			KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
 			KeyCode::Up | KeyCode::Char('k') => {
 				self.table.previous_row();
@@ -145,11 +215,26 @@ impl Page for SelectDrive {
 			_ => Signal::Wait,
 		}
 	}
+
+	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate drive list")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select drive for installation")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Return to previous menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the drive you want to use for your NixOS installation.")],
+			vec![(None, "The selected drive will be used for partitioning and formatting.")],
+			vec![(Some((Color::Red, Modifier::BOLD)), "WARNING: "), (None, "All data on the selected drive will be erased!")],
+		]);
+		("Select Drive".to_string(), help_content)
+	}
 }
 
 pub struct SelectFilesystem {
 	pub buttons: WidgetBox,
 	pub dev_id: Option<u64>,
+	help_modal: HelpModal<'static>,
 }
 
 impl SelectFilesystem {
@@ -168,7 +253,18 @@ impl SelectFilesystem {
 		];
 		let mut button_row = WidgetBox::button_menu(buttons);
 		button_row.focus();
-		Self { buttons: button_row, dev_id }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate filesystem options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select filesystem type")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Return to previous menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Choose the filesystem type for your partition.")],
+			vec![(None, "Different filesystems have different features and performance")],
+			vec![(None, "characteristics. ext4 is recommended for most users.")],
+		]);
+		let help_modal = HelpModal::new("Select Filesystem", help_content);
+		Self { buttons: button_row, dev_id, help_modal }
 	}
 	pub fn get_fs_info<'a>(idx: usize) -> InfoBox<'a> {
 		match idx {
@@ -453,9 +549,23 @@ impl Page for SelectFilesystem {
 		if idx < 9 {
 			info_box.render(f, vert_chunks[1]);
 		}
+		
+		// Render help modal on top
+		self.help_modal.render(f, area);
 	}
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				return Signal::Wait;
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				return Signal::Wait;
+			}
+			_ if self.help_modal.visible => {
+				return Signal::Wait;
+			}
 			KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
 			KeyCode::Up | KeyCode::Char('k') => {
 				self.buttons.prev_child();
@@ -507,12 +617,27 @@ impl Page for SelectFilesystem {
 			_ => Signal::Wait,
 		}
 	}
+
+	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate filesystem options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select filesystem type")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Return to previous menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Choose the filesystem type for your partition.")],
+			vec![(None, "Different filesystems have different features and performance")],
+			vec![(None, "characteristics. ext4 is recommended for most users.")],
+		]);
+		("Select Filesystem".to_string(), help_content)
+	}
 }
 
 pub struct ManualPartition {
 	disk_config: TableWidget,
 	buttons: WidgetBox,
 	confirming_reset: bool,
+	help_modal: HelpModal<'static>,
 }
 
 impl ManualPartition {
@@ -525,7 +650,19 @@ impl ManualPartition {
 		];
 		let buttons = WidgetBox::button_menu(buttons);
 		disk_config.focus();
-		Self { disk_config, buttons, confirming_reset: false }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate partitions and buttons")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Tab"), (None, " - Switch between partition table and buttons")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select partition or button action")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Return to previous menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Manually configure drive partitions. Select partitions to")],
+			vec![(None, "modify them or select free space to create new partitions.")],
+			vec![(None, "Use buttons at bottom for additional actions.")],
+		]);
+		let help_modal = HelpModal::new("Manual Partitioning", help_content);
+		Self { disk_config, buttons, confirming_reset: false, help_modal }
 	}
 }
 
@@ -567,8 +704,26 @@ impl Page for ManualPartition {
 
 		self.disk_config.render(f, chunks[0]);
 		self.buttons.render(f, hor_chunks[1]);
+		
+		// Render help modal on top
+		self.help_modal.render(f, area);
 	}
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
+		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				return Signal::Wait;
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				return Signal::Wait;
+			}
+			_ if self.help_modal.visible => {
+				return Signal::Wait;
+			}
+			_ => {}
+		}
+		
 		if self.confirming_reset && event.code != KeyCode::Enter {
 			self.confirming_reset = false;
 			self.buttons.set_children_inplace(vec![
@@ -702,10 +857,26 @@ impl Page for ManualPartition {
 			self.handle_input(installer, event)
 		}
 	}
+
+	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate partitions and buttons")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Tab"), (None, " - Switch between partition table and buttons")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select partition or button action")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Return to previous menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Manually configure drive partitions. Select partitions to")],
+			vec![(None, "modify them or select free space to create new partitions.")],
+			vec![(None, "Use buttons at bottom for additional actions.")],
+		]);
+		("Manual Partitioning".to_string(), help_content)
+	}
 }
 
 pub struct SuggestPartition {
-	buttons: WidgetBox
+	buttons: WidgetBox,
+	help_modal: HelpModal<'static>,
 }
 
 impl SuggestPartition {
@@ -716,7 +887,18 @@ impl SuggestPartition {
 		];
 		let mut button_row = WidgetBox::button_menu(buttons);
 		button_row.focus();
-		Self { buttons: button_row }
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate yes/no options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Confirm selection")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Cancel and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Confirm whether to use a suggested partition layout.")],
+			vec![(None, "This will create a standard boot and root partition setup.")],
+			vec![(Some((Color::Red, Modifier::BOLD)), "WARNING: "), (None, "All existing data will be erased!")],
+		]);
+		let help_modal = HelpModal::new("Suggest Partition Layout", help_content);
+		Self { buttons: button_row, help_modal }
 	}
 }
 
@@ -764,9 +946,23 @@ impl Page for SuggestPartition {
 		);
 		info_box.render(f, chunks[0]);
 		self.buttons.render(f, chunks[1]);
+		
+		// Render help modal on top
+		self.help_modal.render(f, area);
 	}
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				return Signal::Wait;
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				return Signal::Wait;
+			}
+			_ if self.help_modal.visible => {
+				return Signal::Wait;
+			}
 			KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
 			KeyCode::Up | KeyCode::Char('k') => {
 				self.buttons.prev_child();
@@ -799,6 +995,20 @@ impl Page for SuggestPartition {
 			}
 			_ => Signal::Wait,
 		}
+	}
+
+	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate yes/no options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Confirm selection")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Cancel and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Confirm whether to use a suggested partition layout.")],
+			vec![(None, "This will create a standard boot and root partition setup.")],
+			vec![(Some((Color::Red, Modifier::BOLD)), "WARNING: "), (None, "All existing data will be erased!")],
+		]);
+		("Suggest Partition Layout".to_string(), help_content)
 	}
 }
 
