@@ -16,6 +16,26 @@ pub fn get_entry_id() -> u64 {
 	NEXT_PART_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
+pub fn bytes_disko_cfg(bytes: u64) -> String {
+	const K: f64 = 1000.0;
+	const M: f64 = 1000.0 * K;
+	const G: f64 = 1000.0 * M;
+	const T: f64 = 1000.0 * G;
+
+	let bytes_f = bytes as f64;
+	if bytes_f >= T {
+		format!("{:.0}T", bytes_f / T)
+	} else if bytes_f >= G {
+		format!("{:.0}G", bytes_f / G)
+	} else if bytes_f >= M {
+		format!("{:.0}M", bytes_f / M)
+	} else if bytes_f >= K {
+		format!("{:.0}K", bytes_f / K)
+	} else {
+		format!("{bytes}B")
+	}
+}
+
 pub fn bytes_readable(bytes: u64) -> String {
 	const KIB: u64 = 1 << 10;
 	const MIB: u64 = 1 << 20;
@@ -240,6 +260,35 @@ impl Disk {
 				DiskTableHeader::ReadOnly => "no".into(),
 			}
 		}).collect()
+	}
+	pub fn as_disko_cfg(&self) -> serde_json::Value {
+		let mut partitions = serde_json::Map::new();
+		for item in &self.layout {
+			if let DiskItem::Partition(p) = item {
+				if *p.status() == PartStatus::Delete {
+					continue;
+				}
+				let name = p.label()
+					.map(|s| s.to_string())
+					.unwrap_or_else(|| format!("part{}", p.id()));
+
+				partitions.insert(name, serde_json::json!({
+					"size": bytes_disko_cfg(p.size_bytes(p.sector_size)),
+					"type": p.fs_gpt_code(p.flags.contains(&"esp".to_string())),
+					"format": p.disko_fs_type(),
+					"mountpoint": p.mount_point(),
+				}));
+			}
+		}
+
+		serde_json::json!({
+			"device": format!("/dev/{}", self.name),
+			"type": "disk",
+			"content": {
+				"type": "gpt",
+				"partitions": partitions
+			}
+		})
 	}
 	pub fn name(&self) -> &str {
 		&self.name
@@ -620,6 +669,32 @@ impl Partition {
 	}
 	pub fn fs_type(&self) -> Option<&str> {
 		self.fs_type.as_deref()
+	}
+	pub fn disko_fs_type(&self) -> Option<&'static str> {
+		match self.fs_type.as_deref()? {
+			"ext4" => Some("ext4"),
+			"ext3" => Some("ext3"),
+			"ext2" => Some("ext2"),
+			"btrfs" => Some("btrfs"),
+			"xfs" => Some("xfs"),
+			"fat12" => Some("vfat"),
+			"fat16" => Some("vfat"),
+			"fat32" => Some("vfat"),
+			"ntfs" => Some("ntfs"),
+			"swap" => Some("swap"),
+			_ => None,
+		}
+	}
+	pub fn fs_gpt_code(&self, is_esp: bool) -> Option<&'static str> {
+		match self.fs_type.as_deref()? {
+			"ext4" | "ext3" | "ext2" | "btrfs" | "xfs" => Some("8300"),
+			"fat12" | "fat16" | "fat32" => {
+				if is_esp { Some("EF00") } else { Some("0700") }
+			}
+			"ntfs" => Some("0700"),
+			"swap" => Some("8200"),
+			_ => None,
+		}
 	}
 	pub fn set_fs_type<S: Into<String>>(&mut self, fs_type: S) {
 		self.fs_type = Some(fs_type.into());

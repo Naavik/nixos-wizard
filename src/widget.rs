@@ -1,3 +1,5 @@
+use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
+use itertools::Itertools;
 use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Alignment, Constraint, Layout, Rect}, style::{Color, Modifier, Style}, text::{Line, Span}, widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Table, TableState, Widget}, Frame};
 use serde_json::Value;
 
@@ -389,6 +391,7 @@ impl ConfigWidget for Button {
 pub struct LineEditor {
 	pub focused: bool,
 	pub placeholder: Option<String>,
+	pub is_secret: bool,
 	pub title: String,
 	pub value: String,
 	pub error: Option<String>,
@@ -403,24 +406,76 @@ impl LineEditor {
 			focused: false,
 			placeholder,
 			title,
+			is_secret: false,
 			value: String::new(),
 			error: None,
 			cursor: 0
 		}
 	}
+	pub fn secret(mut self, is_secret: bool) -> Self {
+		self.is_secret = is_secret;
+		self
+	}
+	fn get_placeholder_line(&self, focused: bool) -> Line {
+		if let Some(placeholder) = &self.placeholder {
+			if placeholder.is_empty() {
+				if focused {
+					let span = Span::styled(
+						" ",
+						Style::default().fg(Color::DarkGray).bg(Color::White).add_modifier(Modifier::ITALIC),
+					);
+					Line::from(span)
+				} else {
+					let span = Span::styled(
+						" ",
+						Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+					);
+					Line::from(span)
+				}
+			} else {
+				let first_char = placeholder.chars().next().unwrap_or(' ');
+				let rest = &placeholder[first_char.len_utf8()..];
+				let first_char_span = if focused {
+					Span::styled(
+						first_char.to_string(),
+						Style::default().fg(Color::DarkGray).bg(Color::White).add_modifier(Modifier::ITALIC),
+					)
+				} else {
+					Span::styled(
+						first_char.to_string(),
+						Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+					)
+				};
+				let rest_span = Span::styled(
+					rest.to_string(),
+					Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+				);
+				Line::from(vec![first_char_span, rest_span])
+			}
+		} else {
+			let span = Span::styled(
+				" ",
+				Style::default().fg(Color::DarkGray).bg(Color::White).add_modifier(Modifier::ITALIC),
+			);
+			Line::from(span)
+		}
+	}
 	fn render_line(&self) -> Line {
 		if !self.focused {
-			let span = Span::raw(self.value.clone());
-			return Line::from(span);
+			if self.is_secret {
+				let masked = "*".repeat(self.value.chars().count());
+				let span = Span::raw(masked);
+				return Line::from(span);
+			} else if !self.value.is_empty() {
+				let span = Span::raw(self.value.clone());
+				return Line::from(span);
+			} else {
+				return self.get_placeholder_line(false);
+			}
 		}
 
 		if self.value.is_empty() {
-			let placeholder = self.placeholder.clone().unwrap_or_default();
-			let span = Span::styled(
-				placeholder,
-				Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
-			);
-			return Line::from(span);
+			return self.get_placeholder_line(true);
 		}
 
 		let mut left = String::new();
@@ -429,9 +484,19 @@ impl LineEditor {
 
 		for (i, c) in self.value.chars().enumerate() {
 			if i == self.cursor {
-				cursor_char = Some(c);
+				if self.is_secret {
+					cursor_char = Some('*');
+				} else {
+					cursor_char = Some(c);
+				}
 			} else if i < self.cursor {
-				left.push(c);
+				if self.is_secret {
+					left.push('*');
+				} else {
+					left.push(c);
+				}
+			} else if self.is_secret {
+				right.push('*');
 			} else {
 				right.push(c);
 			}
@@ -449,6 +514,18 @@ impl LineEditor {
 	fn as_widget(&self) -> Paragraph {
 		Paragraph::new(self.render_line())
 			.block(Block::default().title(self.title.clone()).borders(Borders::ALL))
+	}
+	pub fn clear(&mut self) {
+		self.value.clear();
+		self.cursor = 0;
+		self.error = None;
+	}
+	pub fn set_value(&mut self, value: impl ToString) {
+		self.value = value.to_string();
+		if self.cursor > self.value.len() {
+			self.cursor = self.value.len();
+		}
+		self.error = None;
 	}
 	pub fn error(&mut self, msg: impl ToString) {
 		self.error = Some(msg.to_string());
@@ -541,10 +618,16 @@ impl ConfigWidget for LineEditor {
 	}
 }
 
+pub struct StrListItem {
+	pub idx: usize,
+}
+
 pub struct StrList {
 	pub focused: bool,
 	pub title: String,
 	pub items: Vec<String>,
+	pub filtered_items: Vec<StrListItem>, // after filtering
+	pub filter: Option<String>,
 	pub selected_idx: usize,
 	pub committed_idx: Option<usize>,
 	pub committed: Option<String>,
@@ -552,17 +635,24 @@ pub struct StrList {
 
 impl StrList {
 	pub fn new(title: impl Into<String>, items: Vec<String>) -> Self {
+		let filtered_items = items.iter().cloned().enumerate().map(|(i,_)| StrListItem { idx: i }).collect();
 		Self {
 			focused: false,
 			title: title.into(),
+			filtered_items,
 			items,
+			filter: None,
 			selected_idx: 0,
 			committed_idx: None,
 			committed: None,
 		}
 	}
+	pub fn selected_item(&self) -> Option<&String> {
+		let item_idx = self.filtered_items.get(self.selected_idx)?;
+		self.items.get(item_idx.idx)
+	}
 	pub fn next_item(&mut self) -> bool {
-		if self.selected_idx + 1 < self.items.len() {
+		if self.selected_idx + 1 < self.filtered_items.len() {
 			self.selected_idx += 1;
 			true
 		} else {
@@ -589,6 +679,88 @@ impl StrList {
 	pub fn is_empty(&self) -> bool {
 		self.items.is_empty()
 	}
+	pub fn sort(&mut self) {
+		self.items.sort();
+		self.set_filter(self.filter.clone());
+	}
+	pub fn sort_by<F>(&mut self, mut compare: F)
+	where
+		F: FnMut(&String, &String) -> std::cmp::Ordering,
+	{
+		self.items.sort_by(|a, b| compare(a, b));
+		self.set_filter(self.filter.clone());
+	}
+	pub fn set_items(&mut self, items: Vec<String>) {
+		self.items = items;
+		if self.selected_idx >= self.items.len() {
+			self.selected_idx = self.items.len().saturating_sub(1);
+		}
+		self.set_filter(self.filter.clone());
+	}
+	pub fn set_filter(&mut self, filter: Option<impl Into<String>>) {
+		let matcher = SkimMatcherV2::default();
+		if let Some(f) = filter {
+			let f = f.into();
+			self.filter = Some(f.clone());
+			let mut results: Vec<_> = self.items
+				.iter()
+				.enumerate()
+				.filter_map(|(i,item)| {
+					matcher.fuzzy_match(item, &f)
+						.map(|score| (i, score))
+				})
+				.collect();
+			results.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+			self.filtered_items = results.into_iter().map(|(i,_)| StrListItem { idx: i }).collect();
+		} else {
+			self.filter = None;
+			self.filtered_items = self.items.iter().cloned().enumerate().map(|(i,_)| StrListItem { idx: i }).collect();
+		}
+		self.selected_idx = 0;
+	}
+	pub fn push_item(&mut self, item: impl Into<String>) {
+		self.items.push(item.into());
+	}
+	pub fn push_unique(&mut self, item: impl Into<String>) -> bool {
+		let item = item.into();
+		if !self.items.contains(&item) {
+			self.push_item(item);
+			true
+		} else {
+			false
+		}
+	}
+	pub fn push_sort_unique(&mut self, item: impl Into<String>) -> bool {
+		let added = self.push_unique(item);
+		if added {
+			self.sort();
+		}
+		added
+	}
+	pub fn push_sort(&mut self, item: impl Into<String>) {
+		self.push_item(item);
+		self.sort();
+	}
+	pub fn add_item(&mut self, item: impl Into<String>) {
+		self.push_item(item);
+		self.set_filter(self.filter.clone());
+	}
+	pub fn remove_item(&mut self, idx: usize) -> Option<String> {
+		let idx = self.filtered_items.get(idx).map(|sli| sli.idx)?;
+		if idx < self.items.len() {
+			let item = self.items.remove(idx);
+			self.set_filter(self.filter.clone());
+			if self.selected_idx >= self.filtered_items.len() && !self.filtered_items.is_empty() {
+				self.selected_idx = self.filtered_items.len() - 1;
+			}
+			Some(item)
+		} else {
+			None
+		}
+	}
+	pub fn remove_selected(&mut self) -> Option<String> {
+		self.remove_item(self.selected_idx)
+	}
 }
 
 impl ConfigWidget for StrList {
@@ -614,7 +786,7 @@ impl ConfigWidget for StrList {
 	}
 	fn render(&self, f: &mut Frame, area: Rect) {
 		let items: Vec<ListItem> = self
-			.items
+			.filtered_items
 			.iter()
 			.enumerate()
 			.map(|(i,item)| {
@@ -623,6 +795,8 @@ impl ConfigWidget for StrList {
 				} else {
 					"  "
 				};
+				let idx = item.idx;
+				let item = &self.items[idx];
 				ListItem::new(Span::raw(format!("{prefix}{item}")))
 			})
 			.collect();
@@ -793,6 +967,17 @@ impl TableWidget {
 			})
 		} else {
 			None
+		}
+	}
+	pub fn fix_selection(&mut self) {
+		if let Some(idx) = self.selected_row {
+			if idx >= self.rows.len() {
+				self.selected_row = Some(0);
+			}
+		} else if !self.rows.is_empty() {
+			self.selected_row = Some(0);
+		} else {
+			self.selected_row = None;
 		}
 	}
 	pub fn rows(&self) -> &Vec<Vec<String>> {

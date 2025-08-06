@@ -253,6 +253,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
+name = "fuzzy-matcher"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54614a3312934d066701a80f20f15fa3b56d67ac7722b39eea5b4c9dd1d66c94"
+dependencies = [
+ "thread_local",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.15.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -305,6 +314,15 @@ name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
 dependencies = [
  "either",
 ]
@@ -400,7 +418,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "env_logger",
+ "fuzzy-matcher",
  "indoc",
+ "itertools 0.14.0",
  "log",
  "ratatui",
  "serde",
@@ -508,7 +528,7 @@ dependencies = [
  "crossterm",
  "indoc",
  "instability",
- "itertools",
+ "itertools 0.13.0",
  "lru",
  "paste",
  "strum",
@@ -701,6 +721,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "thread_local"
+version = "1.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f60246a4944f24f6e018aa17cdeffb7818b76356965d03b07d6a9886e8962185"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "time"
 version = "0.3.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -739,7 +768,7 @@ version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b3644627a5af5fa321c95b9b235a72fd24cd29c648c2c379431e6628655627bf"
 dependencies = [
- "itertools",
+ "itertools 0.13.0",
  "unicode-segmentation",
  "unicode-width 0.1.14",
 ]

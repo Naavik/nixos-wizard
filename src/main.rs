@@ -8,7 +8,7 @@ use ratatui::crossterm::event::{self, Event, KeyCode};
 use serde_json::Value;
 use std::time::{Duration, Instant};
 
-use crate::installer::{Installer, Menu, Page, Signal};
+use crate::installer::{systempkgs::init_nixpkgs, Installer, Menu, Page, Signal};
 
 pub mod installer;
 pub mod widget;
@@ -96,6 +96,7 @@ fn main() -> anyhow::Result<()> {
 		.target(env_logger::Target::Pipe(log))
 		.init();
 	debug!("Logger initialized");
+	init_nixpkgs();
 
 	let mut stdout = io::stdout();
 	let res = {
@@ -181,6 +182,9 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 						}
 						Signal::WriteCfg => {
 							debug!("WriteCfg signal received");
+							let disko = installer.drive_config.clone().unwrap().as_disko_cfg();
+							let json = serde_json::to_string_pretty(&disko)?;
+							debug!("Disk config: {json}");
 							// Handle configuration writing here
 						}
 						Signal::Error(err) => {
