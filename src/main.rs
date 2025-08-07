@@ -134,11 +134,27 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 				])
 				.split(f.area());
 
-			// Draw header
-			let header = Paragraph::new("Install NixOS")
+			// Draw header with three columns: empty, title, help text
+			let header_chunks = Layout::default()
+				.direction(Direction::Horizontal)
+				.constraints([
+					Constraint::Percentage(33),  // Left section (empty)
+					Constraint::Percentage(34),  // Middle section (title)
+					Constraint::Percentage(33),  // Right section (help)
+				])
+				.split(chunks[0]);
+
+			// Title in center
+			let title = Paragraph::new("Install NixOS")
 				.style(Style::default().add_modifier(Modifier::BOLD))
 				.alignment(Alignment::Center);
-			f.render_widget(header, chunks[0]);
+			f.render_widget(title, header_chunks[1]);
+
+			// Help text on right
+			let help_text = Paragraph::new("Press '?' for help")
+				.style(Style::default().fg(Color::Gray))
+				.alignment(Alignment::Center);
+			f.render_widget(help_text, header_chunks[0]);
 
 			// Draw current page in the remaining area
 			if let Some(page) = page_stack.last_mut() {

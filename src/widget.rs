@@ -771,6 +771,124 @@ impl StrList {
 	}
 }
 
+/// Optimized list widget that works with pre-sorted data and avoids expensive operations
+pub struct OptimizedStrList {
+	pub focused: bool,
+	pub title: String,
+	pub items: Vec<String>,
+	pub filter: Option<String>,
+	pub selected_idx: usize,
+}
+
+impl OptimizedStrList {
+	pub fn new(title: impl Into<String>, items: Vec<String>) -> Self {
+		Self {
+			focused: false,
+			title: title.into(),
+			items,
+			filter: None,
+			selected_idx: 0,
+		}
+	}
+	
+	pub fn set_items(&mut self, items: Vec<String>) {
+		self.items = items;
+		if self.selected_idx >= self.items.len() {
+			self.selected_idx = self.items.len().saturating_sub(1);
+		}
+	}
+	
+	pub fn selected_item(&self) -> Option<&String> {
+		self.items.get(self.selected_idx)
+	}
+	
+	pub fn next_item(&mut self) -> bool {
+		if self.selected_idx + 1 < self.items.len() {
+			self.selected_idx += 1;
+			true
+		} else {
+			false
+		}
+	}
+	
+	pub fn previous_item(&mut self) -> bool {
+		if self.selected_idx > 0 {
+			self.selected_idx -= 1;
+			true
+		} else {
+			false
+		}
+	}
+	
+	pub fn len(&self) -> usize {
+		self.items.len()
+	}
+	
+	pub fn is_empty(&self) -> bool {
+		self.items.is_empty()
+	}
+	
+	pub fn focus(&mut self) {
+		self.focused = true;
+	}
+	
+	pub fn unfocus(&mut self) {
+		self.focused = false;
+	}
+	
+	pub fn is_focused(&self) -> bool {
+		self.focused
+	}
+}
+
+impl ConfigWidget for OptimizedStrList {
+	fn render(&self, f: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
+		use ratatui::{
+			prelude::*,
+			widgets::{Block, Borders, List, ListItem, ListState},
+		};
+		
+		let items: Vec<ListItem> = self.items
+			.iter()
+			.map(|item| ListItem::new(item.as_str()))
+			.collect();
+		
+		let border_color = if self.focused {
+			Color::Yellow
+		} else {
+			Color::Gray
+		};
+		
+		let list = List::new(items)
+			.block(Block::default()
+				.title(self.title.as_str())
+				.borders(Borders::ALL)
+				.border_style(Style::default().fg(border_color)))
+			.highlight_style(Style::default().bg(Color::Blue).fg(Color::White));
+		
+		let mut state = ListState::default();
+		state.select(Some(self.selected_idx));
+		
+		f.render_stateful_widget(list, area, &mut state);
+	}
+	
+	fn handle_input(&mut self, key: ratatui::crossterm::event::KeyEvent) -> super::Signal {
+		super::Signal::Wait
+	}
+	
+	fn focus(&mut self) {
+		self.focused = true;
+	}
+	
+	fn unfocus(&mut self) {
+		self.focused = false;
+	}
+	
+	fn is_focused(&self) -> bool {
+		self.focused
+	}
+}
+
 impl ConfigWidget for StrList {
 	fn handle_input(&mut self, key: KeyEvent) -> Signal {
 		match key.code {
