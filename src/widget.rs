@@ -470,7 +470,7 @@ impl LineEditor {
 				let span = Span::raw(self.value.clone());
 				return Line::from(span);
 			} else {
-				return self.get_placeholder_line(false);
+				return Line::from(Span::raw(" "));
 			}
 		}
 

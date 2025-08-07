@@ -1,7 +1,7 @@
 use std::{path::PathBuf, process::{Command, Stdio}};
 use serde_json::Value;
 
-use crate::{attrset, merge_attrs};
+use crate::{attrset, list, merge_attrs, installer::users::User};
 
 pub fn nixstr(val: impl ToString) -> String {
 	let val = val.to_string();
@@ -58,90 +58,178 @@ pub struct NixSerializer {
   }
 }
 */
+#[derive(Debug)]
+pub struct Configs {
+	pub system: String,
+	pub disko: String,
+	pub flake_path: Option<String>
+}
 
-impl NixSerializer {
-	pub fn new(config: Value, output_dir: PathBuf, use_flake: bool) -> Self {
-		Self { config, output_dir, use_flake }
+pub struct NixWriter {
+	config: Value,
+	output_dir: PathBuf,
+	write_flake: bool
+}
+
+impl NixWriter {
+	pub fn new(
+		config: Value,
+		output_dir: PathBuf,
+		write_flake: bool
+	) -> Self {
+		Self {
+			config,
+			output_dir,
+			write_flake
+		}
 	}
-	pub fn mk_nix_config(&self) -> anyhow::Result<String> {
+	pub fn write_configs(&self) -> anyhow::Result<Configs> {
+		let disko = {
+			let config = self.config["disko"].clone();
+			self.write_disko_config(config)?
+		};
+		let sys_cfg = {
+			let config = self.config["config"].clone();
+			self.write_sys_config(config)?
+		};
+		let flake_path = self.config.get("flake_path").and_then(|v| v.as_str().map(|s| s.to_string()));
+
+		Ok(Configs {
+			system: sys_cfg,
+			disko,
+			flake_path
+		})
+	}
+	pub fn write_sys_config(&self, config: Value) -> anyhow::Result<String> {
+		// initialize the attribute set
 		let mut cfg_attrs = String::from("{}");
-		let Value::Object(ref cfg) = self.config else { unreachable!() };
-		for key in cfg.keys() {
-			match key.as_str() {
-				"audioBackend" => {
-					if let Some(Value::String(value)) = cfg.get(key) {
-						let audio_attrs = self.parse_audio(value.clone());
-						cfg_attrs = merge_attrs!(cfg_attrs, audio_attrs);
-					}
-				}
-				"bootloader" => {
-					if let Some(Value::String(value)) = cfg.get(key) {
-						let bootloader_attrs = self.parse_bootloader(value.clone());
-						cfg_attrs = merge_attrs!(cfg_attrs, bootloader_attrs);
-					}
-				}
-				"desktopEnvironment" => {
-					if let Some(Value::String(value)) = cfg.get(key) {
-						let de_attrs = self.parse_desktop_environment(value.clone());
-						cfg_attrs = merge_attrs!(cfg_attrs, de_attrs);
-					}
-				}
-				"greeter" => {
-					if let Some(Value::String(value)) = cfg.get(key) {
-						let greeter_attrs = self.parse_greeter(value.clone());
-						cfg_attrs = merge_attrs!(cfg_attrs, greeter_attrs);
-					}
-				}
-				"hostname" => {
-					if let Some(Value::String(value)) = cfg.get(key) {
-						let hostname_attrs = self.parse_hostname(value.clone());
-						cfg_attrs = merge_attrs!(cfg_attrs, hostname_attrs);
-					}
-				}
-				"kernel" => {
-					if let Some(Value::String(value)) = cfg.get(key) {
-						let kernel_attrs = self.parse_kernel(value.clone());
-						cfg_attrs = merge_attrs!(cfg_attrs, kernel_attrs);
-					}
-				}
-				"keyboardLayout" => {
-					if let Some(Value::String(value)) = cfg.get(key) {
-						let kb_attrs = self.parse_kb_layout(value.clone());
-						cfg_attrs = merge_attrs!(cfg_attrs, kb_attrs);
-					}
-				}
-				"locale" => {
-					if let Some(Value::String(value)) = cfg.get(key) {
-						let locale_attrs = self.parse_locale(value.clone());
-						cfg_attrs = merge_attrs!(cfg_attrs, locale_attrs);
-					}
-				}
-				"networkBackend" => {
-					if let Some(Value::String(value)) = cfg.get(key) {
-						let net_attrs = self.parse_network_backend(value.clone());
-						cfg_attrs = merge_attrs!(cfg_attrs, net_attrs);
-					}
-				}
-				"timezone" => {
-					if let Some(Value::String(value)) = cfg.get(key) {
-						let tz_attrs = self.parse_timezone(value.clone());
-						cfg_attrs = merge_attrs!(cfg_attrs, tz_attrs);
-					}
-				}
+		let Value::Object(ref cfg) = config else {
+			return Err(anyhow::anyhow!("Config must be a JSON object"));
+		};
+		for (key,value) in cfg.iter() {
+			log::debug!("Processing key: {key}");
+			log::debug!("Value: {value}");
+			let parsed_config = match key.trim().to_lowercase().as_str() {
+				"audio_backend" => value.as_str().map(Self::parse_audio),
+				"bootloader" => value.as_str().map(Self::parse_bootloader),
+				"desktop_environment" => value.as_str().map(Self::parse_desktop_environment),
+				"enable_flakes" => value.as_bool().filter(|&b| b).map(|_| Self::parse_enable_flakes()),
+				"greeter" => value.as_str().map(Self::parse_greeter),
+				"hostname" => value.as_str().map(Self::parse_hostname),
+				"kernels" => value.as_array().map(Self::parse_kernels),
+				"keyboard_layout" => value.as_str().map(Self::parse_kb_layout),
+				"locale" => value.as_str().map(Self::parse_locale),
+				"network_backend" => value.as_str().map(Self::parse_network_backend),
+				"profile" => None,
+				"root_passwd_hash" => None,
+				"system_pkgs" => value.as_array().map(Self::parse_system_packages),
+				"timezone" => value.as_str().map(Self::parse_timezone),
+				"use_swap" => value.as_bool().filter(|&b| b).map(|_| Self::parse_swap()),
+				"users" => Some(self.parse_users(value.clone())?),
 				_ => {
-					// Ignore other keys for now
+					log::warn!("Unknown configuration key: {key}");
+					None
 				}
+			};
+
+			if let Some(config) = parsed_config {
+				cfg_attrs = merge_attrs!(cfg_attrs, config);
 			}
 		}
+
 		let raw = format!("{{ config, pkgs, ... }}: {cfg_attrs}");
 		fmt_nix(raw)
 	}
-	fn parse_timezone(&self, value: String) -> String {
-		attrset! {
-			"time.timeZone" = nixstr(&value);
+	/*
+	"disko": {
+		"content": {
+			"partitions": {
+				"BOOT": {
+					"format": "vfat",
+					"mountpoint": "/boot",
+					"size": "524M",
+					"type": "EF00"
+				},
+				"ROOT": {
+					"format": "ext4",
+					"mountpoint": "/",
+					"size": "2T",
+					"type": "8300"
+				}
+			},
+			"type": "gpt"
+		},
+		"device": "/dev/nvme1n1",
+		"type": "disk"
+	},
+	 */
+	pub fn write_disko_config(&self, config: Value) -> anyhow::Result<String> {
+		log::debug!("Writing Disko config: {config}");
+		let device = config["device"].as_str().unwrap_or("/dev/sda");
+		let disk_type = config["type"].as_str().unwrap_or("disk");
+		let content = Self::parse_disko_content(&config["content"])?;
+
+		let disko_config = attrset! {
+			"device" = nixstr(device);
+			"type" = nixstr(disk_type);
+			"content" = content;
+		};
+
+		let raw = format!("{{ disko = {disko_config}; }}");
+		fmt_nix(raw)
+	}
+
+	fn parse_disko_content(content: &Value) -> anyhow::Result<String> {
+		let content_type = content["type"].as_str().unwrap_or("gpt");
+		let partitions = &content["partitions"];
+
+		if let Some(partitions_obj) = partitions.as_object() {
+			let mut partition_attrs = Vec::new();
+
+			for (name, partition) in partitions_obj {
+				let partition_config = Self::parse_partition(partition)?;
+				partition_attrs.push(format!("{} = {};", nixstr(name), partition_config));
+			}
+
+			let partitions_attr = format!("{{ {} }}", partition_attrs.join(" "));
+
+			Ok(attrset! {
+				"type" = nixstr(content_type);
+				"partitions" = partitions_attr;
+			})
+		} else {
+			Ok(attrset! {
+				"type" = nixstr(content_type);
+			})
 		}
 	}
-	pub fn parse_network_backend(&self, value: String) -> String {
+
+	fn parse_partition(partition: &Value) -> anyhow::Result<String> {
+		let format = partition["format"].as_str()
+			.ok_or_else(|| anyhow::anyhow!("Missing required 'format' field in partition"))?;
+		let mountpoint = partition["mountpoint"].as_str()
+			.ok_or_else(|| anyhow::anyhow!("Missing required 'mountpoint' field in partition"))?;
+		let size = partition["size"].as_str()
+			.ok_or_else(|| anyhow::anyhow!("Missing required 'size' field in partition"))?;
+		let part_type = partition["type"].as_str()
+			.ok_or_else(|| anyhow::anyhow!("Missing required 'type' field in partition"))?;
+
+		Ok(attrset! {
+			"type" = nixstr("partition");
+			"size" = nixstr(size);
+			"content" = attrset! {
+				"type" = nixstr(part_type);
+				"format" = nixstr(format);
+				"mountpoint" = nixstr(mountpoint);
+			};
+		})
+	}
+	fn parse_timezone(value: &str) -> String {
+		attrset! {
+			"time.timeZone" = nixstr(value);
+		}
+	}
+	pub fn parse_network_backend(value: &str) -> String {
 		match value.to_lowercase().as_str() {
 			"networkmanager" => attrset! {
 				"networking.networkmanager.enable" = "true";
@@ -152,29 +240,43 @@ impl NixSerializer {
 			_ => panic!("Unsupported network backend: {value}"),
 		}
 	}
-	pub fn parse_locale(&self, value: String) -> String {
+	pub fn parse_locale(value: &str) -> String {
 		attrset! {
-			"i18n.defaultLocale" = nixstr(&value);
+			"i18n.defaultLocale" = nixstr(value);
 		}
 	}
-	fn parse_kb_layout(&self, value: String) -> String {
+	fn parse_kb_layout(value: &str) -> String {
 		attrset! {
 			"services.xserver.xkb.layout" = nixstr(value);
 		}
 	}
-	fn parse_kernel(&self, value: String) -> String {
-		let kernel_pkg = match value.to_lowercase().as_str() {
-			"linux" => "pkgs.linuxPackages".to_string(),
-			_ => panic!("Unsupported kernel: {value}"),
-		};
-		attrset! {
-			"boot.kernelPackages" = kernel_pkg;
+	fn parse_kernels(kernels: &Vec<Value>) -> String {
+		if kernels.is_empty() {
+			return String::from("{}");
+		}
+
+		// Take the first kernel as the primary one
+		if let Some(Value::String(kernel)) = kernels.first() {
+			let kernel_pkg = match kernel.to_lowercase().as_str() {
+				"linux" => "pkgs.linuxPackages",
+				"linux_zen" => "pkgs.linuxPackages_zen",
+				"linux_hardened" => "pkgs.linuxPackages_hardened",
+				"linux_lts" => "pkgs.linuxPackages_lts",
+				_ => "pkgs.linuxPackages", // Default fallback
+			};
+			attrset! {
+				"boot.kernelPackages" = kernel_pkg;
+			}
+		} else {
+			String::from("{}")
 		}
 	}
-	fn parse_hostname(&self, value: String) -> String {
-		format!("networking.hostName = \"{value}\";")
+	fn parse_hostname(value: &str) -> String {
+		attrset! {
+			"networking.hostName" = nixstr(value);
+		}
 	}
-	fn parse_greeter(&self, value: String) -> String {
+	fn parse_greeter(value: &str) -> String {
 		match value.to_lowercase().as_str() {
 			"sddm" => attrset! {
 				"services.displayManager.sddm.enable" = true;
@@ -188,10 +290,13 @@ impl NixSerializer {
 			_ => panic!("Unsupported greeter: {value}"),
 		}
 	}
-	fn parse_desktop_environment(&self, value: String) -> String {
+	fn parse_desktop_environment(value: &str) -> String {
 		match value.to_lowercase().as_str() {
 			"gnome" => attrset! {
 				"services.xserver.desktopManager.gnome.enable" = true;
+			},
+			"hyprland" => attrset! {
+				"programs.hyprland.enable" = true;
 			},
 			"plasma" | "kde plasma" => attrset! {
 				"services.xserver.desktopManager.plasma5.enable" = true;
@@ -211,7 +316,7 @@ impl NixSerializer {
 			_ => panic!("Unsupported desktop environment: {value}"),
 		}
 	}
-	fn parse_audio(&self, value: String) -> String {
+	fn parse_audio(value: &str) -> String {
 		match value.to_lowercase().as_str() {
 			"pulseaudio" => attrset! {
 				"services.pulseaudio.enable" = true;
@@ -222,7 +327,7 @@ impl NixSerializer {
 			_ => panic!("Unsupported audio backend: {value}"),
 		}
 	}
-	fn parse_bootloader(&self, value: String) -> String {
+	fn parse_bootloader(value: &str) -> String {
 		let bootloader_attrs = match value.to_lowercase().as_str() {
 			"systemd-boot" => attrset! {
 				"systemd-boot.enable" = true;
@@ -243,4 +348,90 @@ impl NixSerializer {
 			"boot.loader" = bootloader_attrs;
 		}
 	}
+
+	fn parse_users(&self, users_json: Value) -> anyhow::Result<String> {
+		let users: Vec<User> = serde_json::from_value(users_json)?;
+		if users.is_empty() {
+			return Ok(String::from("{}"));
+		}
+
+		let mut user_configs = Vec::new();
+		for user in users {
+			let groups_list = if user.groups.is_empty() {
+				"[]".to_string()
+			} else {
+				let group_strings: Vec<String> = user.groups.iter().map(nixstr).collect();
+				format!("[ {} ]", group_strings.join(" "))
+			};
+			let user_config = attrset! {
+				"isNormalUser" = "true";
+				"extraGroups" = groups_list;
+				"hashedPassword" = nixstr(user.password_hash);
+			};
+			user_configs.push(format!("\"{}\" = {};", user.username, user_config));
+		}
+
+		let users = attrset! {
+			"users.users" = format!("{{ {} }}", user_configs.join(" "));
+		};
+
+		log::debug!("Parsed users config: {}", users);
+
+		Ok(users)
+	}
+
+	fn parse_system_packages(packages: &Vec<Value>) -> String {
+		if packages.is_empty() {
+			return String::from("{}");
+		}
+
+		let pkg_list: Vec<String> = packages
+			.iter()
+			.filter_map(&Value::as_str)
+			.map(&str::to_string)
+			.collect();
+
+		if pkg_list.is_empty() {
+			return String::from("{}");
+		}
+
+		let packages_attr = format!("with pkgs; [ {} ]", pkg_list.join(" "));
+		attrset! {
+			"environment.systemPackages" = packages_attr;
+		}
+	}
+
+	fn parse_enable_flakes() -> String {
+		attrset! {
+			"nix.settings.experimental-features" = "[ \"nix-command\" \"flakes\" ]";
+		}
+	}
+
+	fn parse_swap() -> String {
+		attrset! {
+			"swapDevices" = "[ { device = \"/swapfile\"; size = 4096; } ]";
+		}
+	}
+}
+
+impl NixSerializer {
+	pub fn new(config: Value, output_dir: PathBuf, use_flake: bool) -> Self {
+		Self { config, output_dir, use_flake }
+	}
+
+	pub fn mk_disko_config(&self) -> anyhow::Result<Option<String>> {
+		let Value::Object(ref cfg) = self.config else {
+			return Err(anyhow::anyhow!("Config must be a JSON object"));
+		};
+
+		if let Some(disko_json) = cfg.get("disko") {
+			let disko_nix = serde_json::to_string_pretty(disko_json)?;
+			// Convert JSON to Nix format - this would need a proper JSON->Nix converter
+			// For now, return the raw JSON as a comment
+			Ok(Some(format!("# Disko configuration (JSON):\n# {disko_nix}")))
+		} else {
+			Ok(None)
+		}
+	}
+
 }

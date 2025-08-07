@@ -2,11 +2,11 @@ use ratatui::{crossterm::{event::KeyCode, style::style}, layout::{Constraint, Di
 
 use crate::{installer::{Installer, Page, Signal, HIGHLIGHT}, styled_block, widget::{Button, ConfigWidget, HelpModal, InfoBox, LineEditor, StrList, TableWidget, WidgetBox}};
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct User {
-	username: String,
-	password_hash: String,
-	groups: Vec<String>,
+	pub username: String,
+	pub password_hash: String,
+	pub groups: Vec<String>,
 }
 
 impl User {
@@ -103,7 +103,7 @@ impl Page for UserAccounts {
 		self.user_table.fix_selection();
 		self.user_table.render(f, chunks[0]);
 		self.buttons.render(f, chunks[1]);
-		
+
 		// Render help modal on top
 		self.help_modal.render(f, area);
 	}
@@ -123,7 +123,7 @@ impl Page for UserAccounts {
 			}
 			_ => {}
 		}
-		
+
 		if self.user_table.is_focused() {
 			match event.code {
 				KeyCode::Char('j') | KeyCode::Down => {
@@ -179,10 +179,6 @@ impl Page for UserAccounts {
 				KeyCode::Enter => {
 					match self.buttons.selected_child() {
 						Some(0) => {
-							// Add a user
-							Signal::Push(Box::new(AddUser::new()))
-						}
-						Some(1) => {
 							// Back
 							Signal::Pop
 						}
@@ -307,7 +303,7 @@ impl Page for AddUser {
 		self.name_input.render(f, chunks[0]);
 		self.pass_input.render(f, chunks[1]);
 		self.pass_confirm.render(f, chunks[2]);
-		
+
 		// Render help modal on top
 		self.help_modal.render(f, area);
 	}
@@ -895,7 +891,7 @@ impl Page for AlterUser {
 			self.buttons.focus();
 			self.render_main_menu(f, area);
 		}
-		
+
 		// Render help modal on top
 		self.help_modal.render(f, area);
 	}
@@ -915,7 +911,7 @@ impl Page for AlterUser {
 			}
 			_ => {}
 		}
-		
+
 		if self.buttons.is_focused() {
 			self.handle_input_main_menu(installer, event)
 		} else if self.name_input.is_focused() {

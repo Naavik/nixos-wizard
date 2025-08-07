@@ -182,10 +182,27 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 						}
 						Signal::WriteCfg => {
 							debug!("WriteCfg signal received");
-							let disko = installer.drive_config.clone().unwrap().as_disko_cfg();
-							let json = serde_json::to_string_pretty(&disko)?;
-							debug!("Disk config: {json}");
-							// Handle configuration writing here
+
+							// Generate JSON configuration
+							let config_json = installer.to_json()?;
+							debug!("Generated config JSON: {}", serde_json::to_string_pretty(&config_json)?);
+
+							// Create NixSerializer and generate Nix configs
+							let output_dir = std::path::PathBuf::from("./nixos-config");
+							let use_flake = installer.enable_flakes;
+							let serializer = crate::nix::NixWriter::new(config_json, output_dir, use_flake);
+
+							match serializer.write_configs() {
+								Ok(cfg) => {
+									debug!("system config: {}", cfg.system);
+									debug!("disko config: {}", cfg.disko);
+									debug!("flake_path: {:?}", cfg.flake_path);
+								}
+								Err(e) => {
+									debug!("Failed to write configuration files: {e}");
+									return Err(anyhow::anyhow!("Configuration write failed: {e}"));
+								}
+							}
 						}
 						Signal::Error(err) => {
 							return Err(anyhow::anyhow!("{}", err));

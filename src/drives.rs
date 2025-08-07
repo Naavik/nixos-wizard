@@ -215,7 +215,7 @@ pub fn part_table(disk_items: &[DiskItem], sector_size: u64) -> TableWidget {
 	TableWidget::new("Partitions", widths, headers, rows)
 }
 
-#[derive(Clone,Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Disk {
 	name: String,
 	size: u64, // sectors
@@ -517,7 +517,7 @@ impl Disk {
 	}
 }
 
-#[derive(Clone,Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum DiskItem {
 	Partition(Partition),
 	FreeSpace { id: u64, start: u64, size: u64 }, // size in sectors
@@ -586,7 +586,7 @@ impl DiskItem {
 	}
 }
 
-#[derive(Clone,Copy,Debug,PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PartStatus {
 	Delete,
 	Modify,
@@ -595,7 +595,7 @@ pub enum PartStatus {
 	Unknown
 }
 
-#[derive(Clone,Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Partition {
 	id: u64,
 	start: u64, // sectors

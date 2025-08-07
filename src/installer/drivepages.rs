@@ -69,7 +69,7 @@ impl<'a> Page for Drives<'a> {
 
 		self.info_box.render(f, chunks[0]);
 		self.buttons.render(f, chunks[1]);
-		
+
 		// Render help modal on top
 		self.help_modal.render(f, area);
 	}
@@ -165,7 +165,7 @@ impl SelectDrive {
 impl Page for SelectDrive {
 	fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
 		self.table.render(f, area);
-		
+
 		// Render help modal on top
 		self.help_modal.render(f, area);
 	}
@@ -549,7 +549,7 @@ impl Page for SelectFilesystem {
 		if idx < 9 {
 			info_box.render(f, vert_chunks[1]);
 		}
-		
+
 		// Render help modal on top
 		self.help_modal.render(f, area);
 	}
@@ -704,7 +704,7 @@ impl Page for ManualPartition {
 
 		self.disk_config.render(f, chunks[0]);
 		self.buttons.render(f, hor_chunks[1]);
-		
+
 		// Render help modal on top
 		self.help_modal.render(f, area);
 	}
@@ -723,7 +723,7 @@ impl Page for ManualPartition {
 			}
 			_ => {}
 		}
-		
+
 		if self.confirming_reset && event.code != KeyCode::Enter {
 			self.confirming_reset = false;
 			self.buttons.set_children_inplace(vec![
@@ -946,7 +946,7 @@ impl Page for SuggestPartition {
 		);
 		info_box.render(f, chunks[0]);
 		self.buttons.render(f, chunks[1]);
-		
+
 		// Render help modal on top
 		self.help_modal.render(f, area);
 	}
@@ -1051,7 +1051,7 @@ impl NewPartition {
 			button_row
 		};
 		let mount_input = LineEditor::new("New Partition Mount Point", None::<&str>);
-		let mut size_input = LineEditor::new("New Partition Size", None::<&str>);
+		let mut size_input = LineEditor::new("New Partition Size", Some("Empty input uses rest of free space"));
 		size_input.focus();
 		Self {
 			fs_id,
@@ -1114,9 +1114,9 @@ impl NewPartition {
 			KeyCode::Esc => Signal::Pop,
 			KeyCode::Enter => {
 				let input = self.size_input.get_value().unwrap();
-				let input = input.as_str().unwrap().trim(); // TODO: handle these unwraps
+				let mut input = input.as_str().unwrap().trim(); // TODO: handle these unwraps
 				if input.is_empty() {
-					return Signal::Wait;
+					input = "100%";
 				}
 				let Some(ref device) = installer.drive_config else {
 					return Signal::Error(anyhow::anyhow!("No drive config available for new partition size input"));
@@ -1261,6 +1261,11 @@ impl NewPartition {
 				let taken_mounts: Vec<String> = device
 					.layout()
 					.iter()
+					.filter(|di| {
+						let DiskItem::Partition(p) = di else { return true };
+						let PartStatus::Delete = *p.status() else { return true };
+						false // The partition is deleted, so we filter it out
+					})
 					.filter_map(|d| d.mount_point().map(|s| s.to_string()))
 					.collect();
 

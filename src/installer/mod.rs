@@ -15,7 +15,7 @@ use users::UserAccounts;
 use drivepages::Drives;
 use systempkgs::{fetch_nixpkgs,SystemPackages};
 
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Installer {
 	pub flake_path: Option<String>,
 	pub language: Option<String>,
@@ -63,6 +63,47 @@ impl Installer {
 			return;
 		};
 		self.drive_config_display = Some(drive.layout().to_vec())
+	}
+
+	pub fn to_json(&self) -> anyhow::Result<serde_json::Value> {
+		// Create the installer configuration JSON
+		let mut sys_config = serde_json::json!({
+			"hostname": self.hostname,
+			"language": self.language,
+			"keyboard_layout": self.keyboard_layout,
+			"locale": self.locale,
+			"timezone": self.timezone,
+			"enable_flakes": self.enable_flakes,
+			"bootloader": self.bootloader,
+			"use_swap": self.use_swap,
+			"profile": self.profile,
+			"root_passwd_hash": self.root_passwd_hash,
+			"audio_backend": self.audio_backend,
+			"greeter": self.greeter,
+			"desktop_environment": self.desktop_environment,
+			"network_backend": self.network_backend,
+			"system_pkgs": self.system_pkgs,
+			"users": self.users,
+			"kernels": self.kernels
+		});
+
+		// drive configuration if present
+		let disko_cfg = self.drive_config.as_ref().map(|d| d.as_disko_cfg());
+
+		// flake configuration if using flakes
+		let flake_path = self.flake_path.clone();
+
+		let config = serde_json::json!({
+			"config": sys_config,
+			"disko": disko_cfg,
+			"flake_path": flake_path,
+		});
+
+		Ok(config)
+	}
+
+	pub fn from_json(json: serde_json::Value) -> anyhow::Result<Self> {
+		serde_json::from_value(json).map_err(|e| anyhow::anyhow!("Failed to deserialize installer config: {}", e))
 	}
 }
 
@@ -704,7 +745,7 @@ impl Page for SourceFlake {
 
 		info_box.render(f, chunks[0]);
 		self.input.render(f, hor_chunks[1]);
-		
+
 		// Render help modal on top
 		self.help_modal.render(f, area);
 	}
