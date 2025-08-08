@@ -326,6 +326,7 @@ impl Page for SystemPackages {
 
 		if event.code == KeyCode::Char('/') && !self.search_bar.is_focused() {
 			self.search_bar.focus();
+			self.search_bar.clear();
 			self.available.unfocus();
 			self.selected.unfocus();
 			return super::Signal::Wait;

@@ -188,7 +188,25 @@ impl MenuPages {
 			MenuPages::SystemPackages,
 			MenuPages::Network,
 			MenuPages::Timezone,
-			]
+		]
+	}
+	pub fn supported_pages() -> &'static [MenuPages] {
+		&[
+			MenuPages::KeyboardLayout,
+			MenuPages::Locale,
+			MenuPages::EnableFlakes,
+			MenuPages::Drives,
+			MenuPages::Bootloader,
+			MenuPages::Swap,
+			MenuPages::Hostname,
+			MenuPages::RootPassword,
+			MenuPages::UserAccounts,
+			MenuPages::DesktopEnvironment,
+			MenuPages::Audio,
+			MenuPages::SystemPackages,
+			MenuPages::Network,
+			MenuPages::Timezone,
+		]
 	}
 }
 
@@ -219,6 +237,114 @@ impl Display for MenuPages {
 	}
 }
 
+impl MenuPages {
+	/// Get the display widget for this page, if any
+	pub fn display_widget(self, installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
+		match self {
+			MenuPages::SourceFlake => SourceFlake::display_widget(installer),
+			MenuPages::Language => Language::display_widget(installer),
+			MenuPages::KeyboardLayout => KeyboardLayout::display_widget(installer),
+			MenuPages::Locale => Locale::display_widget(installer),
+			MenuPages::EnableFlakes => EnableFlakes::display_widget(installer),
+			MenuPages::Drives => {
+				let sector_size = installer.drive_config.as_ref().map(|d| d.sector_size()).unwrap_or(512);
+				installer.drive_config_display.as_deref()
+					.map(|d| Box::new(part_table(d, sector_size)) as Box<dyn ConfigWidget>)
+			}
+			MenuPages::Bootloader => Bootloader::display_widget(installer),
+			MenuPages::Swap => Swap::display_widget(installer),
+			MenuPages::Hostname => Hostname::display_widget(installer),
+			MenuPages::RootPassword => RootPassword::display_widget(installer),
+			MenuPages::UserAccounts => UserAccounts::display_widget(installer),
+			MenuPages::Profile => Profile::display_widget(installer),
+			MenuPages::Greeter => Greeter::display_widget(installer),
+			MenuPages::DesktopEnvironment => DesktopEnvironment::display_widget(installer),
+			MenuPages::Audio => Audio::display_widget(installer),
+			MenuPages::Kernels => Kernels::display_widget(installer),
+			MenuPages::SystemPackages => SystemPackages::display_widget(installer),
+			MenuPages::Network => Network::display_widget(installer),
+			MenuPages::Timezone => Timezone::display_widget(installer),
+		}
+	}
+
+	/// Get the page info (title and description) for this page
+	pub fn page_info<'a>(self) -> (String, Vec<Line<'a>>) {
+		match self {
+			MenuPages::SourceFlake => SourceFlake::page_info(),
+			MenuPages::Language => Language::page_info(),
+			MenuPages::KeyboardLayout => KeyboardLayout::page_info(),
+			MenuPages::Locale => Locale::page_info(),
+			MenuPages::EnableFlakes => EnableFlakes::page_info(),
+			MenuPages::Drives => (
+				"Drives".to_string(),
+				styled_block(vec![
+					vec![(None, "Select and configure the drives for your NixOS installation.")],
+					vec![(None, "This includes partitioning, formatting, and mount points.")],
+					vec![(None, "If you have already configured a drive, its current configuration will be shown below.")],
+				])
+			),
+			MenuPages::Bootloader => Bootloader::page_info(),
+			MenuPages::Swap => Swap::page_info(),
+			MenuPages::Hostname => Hostname::page_info(),
+			MenuPages::RootPassword => RootPassword::page_info(),
+			MenuPages::UserAccounts => UserAccounts::page_info(),
+			MenuPages::Profile => Profile::page_info(),
+			MenuPages::Greeter => Greeter::page_info(),
+			MenuPages::DesktopEnvironment => DesktopEnvironment::page_info(),
+			MenuPages::Audio => Audio::page_info(),
+			MenuPages::Kernels => Kernels::page_info(),
+			MenuPages::SystemPackages => SystemPackages::page_info(),
+			MenuPages::Network => Network::page_info(),
+			MenuPages::Timezone => Timezone::page_info(),
+		}
+	}
+
+	/// Navigate to the page - returns a Signal to push the appropriate page
+	pub fn navigate(self, installer: &mut Installer) -> Signal {
+		match self {
+			MenuPages::SourceFlake => Signal::Push(Box::new(SourceFlake::new())),
+			MenuPages::Language => Signal::Push(Box::new(Language::new())),
+			MenuPages::KeyboardLayout => Signal::Push(Box::new(KeyboardLayout::new())),
+			MenuPages::Locale => Signal::Push(Box::new(Locale::new())),
+			MenuPages::EnableFlakes => Signal::Push(Box::new(EnableFlakes::new(installer.enable_flakes))),
+			MenuPages::Drives => Signal::Push(Box::new(Drives::new())),
+			MenuPages::Bootloader => Signal::Push(Box::new(Bootloader::new())),
+			MenuPages::Swap => Signal::Push(Box::new(Swap::new(installer.use_swap))),
+			MenuPages::Hostname => Signal::Push(Box::new(Hostname::new())),
+			MenuPages::RootPassword => Signal::Push(Box::new(RootPassword::new())),
+			MenuPages::UserAccounts => Signal::Push(Box::new(UserAccounts::new(installer.users.clone()))),
+			MenuPages::Profile => Signal::Push(Box::new(Profile::new())),
+			MenuPages::Greeter => Signal::Push(Box::new(Greeter::new())),
+			MenuPages::DesktopEnvironment => Signal::Push(Box::new(DesktopEnvironment::new())),
+			MenuPages::Audio => Signal::Push(Box::new(Audio::new())),
+			MenuPages::Kernels => Signal::Push(Box::new(Kernels::new())),
+			MenuPages::SystemPackages => {
+				// we actually need to go ask nixpkgs what packages it has now
+				let pkgs = {
+					let mut retries = 0;
+					loop {
+						let guard = NIXPKGS.read().unwrap();
+						if let Some(nixpkgs) = guard.as_ref() {
+							break nixpkgs.clone();
+						}
+						drop(guard); // Release lock before sleeping
+
+						if retries >= 5 {
+							break fetch_nixpkgs().unwrap_or_default();
+						}
+
+						std::thread::sleep(std::time::Duration::from_millis(500));
+						retries += 1;
+					}
+				};
+				Signal::Push(Box::new(SystemPackages::new(installer.system_pkgs.clone(), pkgs)))
+			}
+			MenuPages::Network => Signal::Push(Box::new(Network::new())),
+			MenuPages::Timezone => Signal::Push(Box::new(Timezone::new())),
+		}
+	}
+}
+
 pub struct Menu {
 	menu_items: StrList,
 	button_row: WidgetBox,
@@ -227,7 +353,7 @@ pub struct Menu {
 
 impl Menu {
 	pub fn new() -> Self {
-		let items = MenuPages::all_pages().iter().map(|p| p.to_string()).collect::<Vec<_>>();
+		let items = MenuPages::supported_pages().iter().map(|p| p.to_string()).collect::<Vec<_>>();
 		let mut menu_items = StrList::new("Main Menu", items);
 		let buttons: Vec<Box<dyn ConfigWidget>> = vec![
 			Box::new(Button::new("Done")),
@@ -252,99 +378,22 @@ impl Menu {
 		Self { menu_items, button_row, help_modal }
 	}
 	pub fn info_box_for_item(&self, installer: &mut Installer, idx: usize) -> WidgetBox {
-		let mut display_widget: Option<Box<dyn ConfigWidget>> = None;
-		let (title, content) = match idx {
-			0 => {
-				display_widget = SourceFlake::display_widget(installer);
-				SourceFlake::page_info()
-			},
-			1 => {
-				display_widget = Language::display_widget(installer);
-				Language::page_info()
-			},
-			2 => {
-				display_widget = KeyboardLayout::display_widget(installer);
-				KeyboardLayout::page_info()
-			},
-			3 => {
-				display_widget = Locale::display_widget(installer);
-				Locale::page_info()
-			},
-			4 => {
-				display_widget = EnableFlakes::display_widget(installer);
-				EnableFlakes::page_info()
-			},
-			5 => {
-				let sector_size = installer.drive_config.as_ref().map(|d| d.sector_size()).unwrap_or(512);
-				display_widget = installer.drive_config_display.as_deref()
-					.map(|d| Box::new(part_table(d, sector_size)) as Box<dyn ConfigWidget>);
-				(
-					"Drives".to_string(),
-					styled_block(vec![
-						vec![(None, "Select and configure the drives for your NixOS installation.")],
-						vec![(None, "This includes partitioning, formatting, and mount points.")],
-						vec![(None, "If you have already configured a drive, its current configuration will be shown below.")],
-					])
-				)
-			}
-			6 => {
-				display_widget = Bootloader::display_widget(installer);
-				Bootloader::page_info()
-			},
-			7 => {
-				display_widget = Swap::display_widget(installer);
-				Swap::page_info()
-			},
-			8 => {
-				display_widget = Hostname::display_widget(installer);
-				Hostname::page_info()
-			},
-			9 => {
-				display_widget = RootPassword::display_widget(installer);
-				RootPassword::page_info()
-			},
-			10 => {
-				display_widget = UserAccounts::display_widget(installer);
-				UserAccounts::page_info()
-			},
-			11 => {
-				display_widget = Profile::display_widget(installer);
-				Profile::page_info()
-			},
-			12 => {
-				display_widget = Greeter::display_widget(installer);
-				Greeter::page_info()
-			},
-			13 => {
-				display_widget = DesktopEnvironment::display_widget(installer);
-				DesktopEnvironment::page_info()
-			},
-			14 => {
-				display_widget = Audio::display_widget(installer);
-				Audio::page_info()
-			},
-			15 => {
-				display_widget = Kernels::display_widget(installer);
-				Kernels::page_info()
-			},
-			16 => {
-				display_widget = SystemPackages::display_widget(installer);
-				SystemPackages::page_info()
-			},
-			17 => {
-				display_widget = Network::display_widget(installer);
-				Network::page_info()
-			},
-			18 => {
-				display_widget = Timezone::display_widget(installer);
-				Timezone::page_info()
-			},
-			_ => (
+		// Get the actual page from supported_pages using the index
+		let supported_pages = MenuPages::supported_pages();
+		let page = supported_pages.get(idx).copied();
+
+		let (display_widget, title, content) = if let Some(page) = page {
+			let display_widget = page.display_widget(installer);
+			let (title, content) = page.page_info();
+			(display_widget, title, content)
+		} else {
+			(
+				None,
 				"Unknown Option".to_string(),
 				styled_block(vec![
 					vec![(None, "No information available for this option.")],
 				])
-			),
+			)
 		};
 		let info_box = Box::new(InfoBox::new(title, content));
 		if let Some(widget) = display_widget {
@@ -533,83 +582,12 @@ impl Page for Menu {
 			KeyCode::Enter => {
 				if self.menu_items.is_focused() {
 					let idx = self.menu_items.selected_idx;
-					match idx {
-						_ if idx == MenuPages::SourceFlake as usize => {
-							Signal::Push(Box::new(SourceFlake::new()))
-						}
-						_ if idx == MenuPages::Language as usize => {
-							Signal::Push(Box::new(Language::new()))
-						}
-						_ if idx == MenuPages::KeyboardLayout as usize => {
-							Signal::Push(Box::new(KeyboardLayout::new()))
-						}
-						_ if idx == MenuPages::Locale as usize => {
-							Signal::Push(Box::new(Locale::new()))
-						}
-						_ if idx == MenuPages::EnableFlakes as usize => {
-							Signal::Push(Box::new(EnableFlakes::new(installer.enable_flakes)))
-						}
-						_ if idx == MenuPages::Drives as usize => {
-							Signal::Push(Box::new(Drives::new()))
-						}
-						_ if idx == MenuPages::Bootloader as usize => {
-							Signal::Push(Box::new(Bootloader::new()))
-						}
-						_ if idx == MenuPages::Swap as usize => {
-							Signal::Push(Box::new(Swap::new(installer.use_swap)))
-						}
-						_ if idx == MenuPages::Hostname as usize => {
-							Signal::Push(Box::new(Hostname::new()))
-						}
-						_ if idx == MenuPages::RootPassword as usize => {
-							Signal::Push(Box::new(RootPassword::new()))
-						}
-						_ if idx == MenuPages::UserAccounts as usize => {
-							Signal::Push(Box::new(UserAccounts::new(installer.users.clone())))
-						}
-						_ if idx == MenuPages::Profile as usize => {
-							Signal::Push(Box::new(Profile::new()))
-						}
-						_ if idx == MenuPages::Greeter as usize => {
-							Signal::Push(Box::new(Greeter::new()))
-						}
-						_ if idx == MenuPages::DesktopEnvironment as usize => {
-							Signal::Push(Box::new(DesktopEnvironment::new()))
-						}
-						_ if idx == MenuPages::Audio as usize => {
-							Signal::Push(Box::new(Audio::new()))
-						}
-						_ if idx == MenuPages::Kernels as usize => {
-							Signal::Push(Box::new(Kernels::new()))
-						}
-						_ if idx == MenuPages::SystemPackages as usize => {
-							// we actually need to go ask nixpkgs what packages it has now
-							let pkgs = {
-								let mut retries = 0;
-								loop {
-									let guard = NIXPKGS.read().unwrap();
-									if let Some(nixpkgs) = guard.as_ref() {
-										break nixpkgs.clone();
-									}
-									drop(guard); // Release lock before sleeping
-
-									if retries >= 5 {
-										break fetch_nixpkgs().unwrap_or_default();
-									}
-
-									std::thread::sleep(std::time::Duration::from_millis(500));
-									retries += 1;
-								}
-							};
-							Signal::Push(Box::new(SystemPackages::new(installer.system_pkgs.clone(),pkgs)))
-						}
-						_ if idx == MenuPages::Network as usize => {
-							Signal::Push(Box::new(Network::new()))
-						}
-						_ if idx == MenuPages::Timezone as usize => {
-							Signal::Push(Box::new(Timezone::new()))
-						}
-						_ => Signal::Wait,
+					// Get the actual page from supported_pages using the index
+					let supported_pages = MenuPages::supported_pages();
+					if let Some(page) = supported_pages.get(idx).copied() {
+						page.navigate(installer)
+					} else {
+						Signal::Wait
 					}
 				} else if self.button_row.is_focused() {
 					match self.button_row.selected_child() {
