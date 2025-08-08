@@ -27,19 +27,14 @@ pub fn init_nixpkgs() {
 
 pub fn fetch_nixpkgs() -> anyhow::Result<Vec<String>> {
 	let json: Value = {
+		/*
+		TODO: find a better way to do this? it kind of sucks
 		let output = Command::new("nix")
-			.args(["search", "nixpkgs", "^", "--json"])
+			.args(["--extra-experimental-features", "nix-command flakes", "search", "nixpkgs", "^", "--json"])
 			.output()?;
-
-
-		if !output.status.success() {
-			return Err(anyhow::anyhow!(
-					"nix-env command failed with status: {}",
-					output.status
-			));
-		}
-
-		serde_json::from_slice(&output.stdout)?
+		*/
+		let precomputed = include_str!("../../pkgs.json");
+		serde_json::from_str(precomputed)?
 	};
 	let pkgs_object = json
 		.as_object()

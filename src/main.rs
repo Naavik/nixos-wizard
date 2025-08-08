@@ -258,17 +258,23 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 							debug!("Generated config JSON: {}", serde_json::to_string_pretty(&config_json)?);
 
 							// Create NixSerializer and generate Nix configs
-							let output_dir = std::path::PathBuf::from("./nixos-config");
-							let use_flake = installer.enable_flakes;
-							let serializer = crate::nixgen::NixWriter::new(config_json, output_dir, use_flake);
+							let serializer = crate::nixgen::NixWriter::new(config_json);
 
 							match serializer.write_configs() {
 								Ok(cfg) => {
 									debug!("system config: {}", cfg.system);
 									debug!("disko config: {}", cfg.disko);
 									debug!("flake_path: {:?}", cfg.flake_path);
-									std::fs::write("/tmp/configuration.nix", cfg.system)?;
-									std::fs::write("/tmp/disko.nix", cfg.disko)?;
+									std::fs::write("/tmp/configuration.nix", cfg.system)
+										.map_err(|e| {
+											debug!("Failed to write system configuration file: {e}");
+											anyhow::anyhow!("Failed to write system configuration file: {e}")
+										})?;
+									std::fs::write("/tmp/disko.nix", cfg.disko)
+										.map_err(|e| {
+											debug!("Failed to write disko configuration file: {e}");
+											anyhow::anyhow!("Failed to write disko configuration file: {e}")
+										})?;
 									page_stack.push(Box::new(InstallProgress::new(installer.clone())?));
 								}
 								Err(e) => {

@@ -594,7 +594,7 @@ impl Page for Menu {
 						Some(0) => { // Done - Show config preview
 							match ConfigPreview::new(installer) {
 								Ok(preview) => Signal::Push(Box::new(preview)),
-								Err(e) => Signal::Error(e),
+								Err(e) => Signal::Error(anyhow::anyhow!("Failed to generate configuration preview: {}", e)),
 							}
 						}
 						Some(1) => Signal::Quit,     // Abort
@@ -2649,9 +2649,7 @@ impl ConfigPreview {
 	pub fn new(installer: &mut Installer) -> anyhow::Result<Self> {
 		// Generate the configuration like the main app does
 		let config_json = installer.to_json()?;
-		let output_dir = std::path::PathBuf::from("./nixos-config");
-		let use_flake = installer.enable_flakes;
-		let serializer = crate::nixgen::NixWriter::new(config_json, output_dir, use_flake);
+		let serializer = crate::nixgen::NixWriter::new(config_json);
 
 		let configs = serializer.write_configs()?;
 
@@ -2937,17 +2935,10 @@ impl<'a> InstallProgress<'a> {
 				 command!("echo", "Beginning NixOS Installation..."),
 				 command!("sleep", "1")
 			 ].into()),
-			(Line::from("Preparing system..."),
-			 vec![
-				command!("echo", "Checking system requirements..."),
-				command!("sleep", "1"),
-				command!("echo", "Verifying disk space..."),
-				command!("sleep", "1")
-			 ].into()),
 			(Line::from("Configuring disk layout..."),
 			 vec![
 				command!("echo", "Partitioning disks..."),
-				command!("sh", "-c", "nix --extra-experimental-features 'nix-command flakes' run github:nix-community/disko/latest -- --yes-wipe-all-disks --mode destroy,format,mount /tmp/disko.nix 2>&1 > /home/pagedmov/projects/nixos-installer/tui-debug.log"),
+				command!("sh", "-c", "disko --yes-wipe-all-disks --mode destroy,format,mount /tmp/disko.nix 2>&1 > /dev/null"),
 			 ].into()),
 			(Line::from("Building NixOS configuration..."),
 			 vec![

@@ -67,20 +67,14 @@ pub struct Configs {
 
 pub struct NixWriter {
 	config: Value,
-	_output_dir: PathBuf,
-	_write_flake: bool
 }
 
 impl NixWriter {
 	pub fn new(
 		config: Value,
-		output_dir: PathBuf,
-		write_flake: bool
 	) -> Self {
 		Self {
 			config,
-			_output_dir: output_dir,
-			_write_flake: write_flake
 		}
 	}
 	pub fn write_configs(&self) -> anyhow::Result<Configs> {
