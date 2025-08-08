@@ -6,15 +6,13 @@
     fenix.url = "github:nix-community/fenix";
   };
 
-  outputs = { self, nixpkgs, fenix }:
+  outputs = { self, nixpkgs, fenix }@inputs:
   let
     system = "x86_64-linux";
     mkRustToolchain = fenix.packages.${system}.complete.withComponents;
     pkgs = import nixpkgs { inherit system; };
-  in
-  {
-    packages.${system}.default = pkgs.rustPlatform.buildRustPackage {
-      pname = "nixos-installer";
+    nixosWizard = pkgs.rustPlatform.buildRustPackage {
+      pname = "nixos-wizard";
       version = "0.1.0";
 
       src = ./.;
@@ -24,6 +22,20 @@
       };
 
       buildInputs = [];
+    };
+  in
+  {
+    nixosConfigurations = {
+      installerIso = nixpkgs.lib.nixosSystem {
+        specialArgs = { inherit inputs nixosWizard; };
+        modules = [
+          ./isoimage/config.nix
+        ];
+      };
+    };
+
+    packages.${system} = {
+      default = nixosWizard;
     };
 
     devShells.${system}.default = let
