@@ -1,6 +1,8 @@
+use std::{collections::VecDeque, io::{BufRead, BufReader}, process::{Command, Stdio}};
+
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use itertools::Itertools;
-use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Alignment, Constraint, Layout, Rect}, style::{Color, Modifier, Style}, text::{Line, Span}, widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Table, TableState, Widget}, Frame};
+use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Alignment, Constraint, Layout, Rect}, style::{Color, Modifier, Style}, text::{Line, Span}, widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Table, TableState, Widget}, Frame};
 use serde_json::Value;
 
 use crate::installer::Signal;
@@ -790,18 +792,18 @@ impl OptimizedStrList {
 			selected_idx: 0,
 		}
 	}
-	
+
 	pub fn set_items(&mut self, items: Vec<String>) {
 		self.items = items;
 		if self.selected_idx >= self.items.len() {
 			self.selected_idx = self.items.len().saturating_sub(1);
 		}
 	}
-	
+
 	pub fn selected_item(&self) -> Option<&String> {
 		self.items.get(self.selected_idx)
 	}
-	
+
 	pub fn next_item(&mut self) -> bool {
 		if self.selected_idx + 1 < self.items.len() {
 			self.selected_idx += 1;
@@ -810,7 +812,7 @@ impl OptimizedStrList {
 			false
 		}
 	}
-	
+
 	pub fn previous_item(&mut self) -> bool {
 		if self.selected_idx > 0 {
 			self.selected_idx -= 1;
@@ -819,23 +821,23 @@ impl OptimizedStrList {
 			false
 		}
 	}
-	
+
 	pub fn len(&self) -> usize {
 		self.items.len()
 	}
-	
+
 	pub fn is_empty(&self) -> bool {
 		self.items.is_empty()
 	}
-	
+
 	pub fn focus(&mut self) {
 		self.focused = true;
 	}
-	
+
 	pub fn unfocus(&mut self) {
 		self.focused = false;
 	}
-	
+
 	pub fn is_focused(&self) -> bool {
 		self.focused
 	}
@@ -847,43 +849,43 @@ impl ConfigWidget for OptimizedStrList {
 			prelude::*,
 			widgets::{Block, Borders, List, ListItem, ListState},
 		};
-		
+
 		let items: Vec<ListItem> = self.items
 			.iter()
 			.map(|item| ListItem::new(item.as_str()))
 			.collect();
-		
+
 		let border_color = if self.focused {
 			Color::Yellow
 		} else {
 			Color::Gray
 		};
-		
+
 		let list = List::new(items)
 			.block(Block::default()
 				.title(self.title.as_str())
 				.borders(Borders::ALL)
 				.border_style(Style::default().fg(border_color)))
 			.highlight_style(Style::default().bg(Color::Blue).fg(Color::White));
-		
+
 		let mut state = ListState::default();
 		state.select(Some(self.selected_idx));
-		
+
 		f.render_stateful_widget(list, area, &mut state);
 	}
-	
+
 	fn handle_input(&mut self, key: ratatui::crossterm::event::KeyEvent) -> super::Signal {
 		super::Signal::Wait
 	}
-	
+
 	fn focus(&mut self) {
 		self.focused = true;
 	}
-	
+
 	fn unfocus(&mut self) {
 		self.focused = false;
 	}
-	
+
 	fn is_focused(&self) -> bool {
 		self.focused
 	}
@@ -953,7 +955,6 @@ impl ConfigWidget for StrList {
 	}
 }
 
-
 pub struct InfoBox<'a> {
 	pub title: String,
 	pub content: Vec<Line<'a>>
@@ -988,6 +989,147 @@ impl<'a> ConfigWidget for InfoBox<'a> {
 		false
 	}
 }
+
+/// Like infobox, except it runs a bunch of commands
+/// and the content is the lines produced by the output of those commands
+/// commands is a vecdeque of unspawned std::process::Commands
+pub struct ShellBox<'a> {
+	pub title: String,
+	pub commands: VecDeque<Command>,
+	pub num_cmds: usize,
+	pub content: Vec<Line<'a>>,
+	pub running: bool,
+	pub error: bool,
+	current_child: Option<std::process::Child>,
+	stdout_reader: Option<BufReader<std::process::ChildStdout>>,
+	stderr_reader: Option<BufReader<std::process::ChildStderr>>,
+}
+
+impl<'a> ShellBox<'a> {
+	pub fn new(title: impl Into<String>, commands: impl IntoIterator<Item = Command>) -> Self {
+		let commands = commands.into_iter().collect::<VecDeque<_>>();
+		Self {
+			title: title.into(),
+			num_cmds: commands.len(),
+			commands,
+			content: vec![],
+			running: false,
+			error: false,
+			current_child: None,
+			stdout_reader: None,
+			stderr_reader: None,
+		}
+	}
+	pub fn progress(&self) -> u32 {
+		// return 0-100 based on commands.len() vs self.num_cmds
+		if self.num_cmds == 0 {
+			100
+		} else {
+			let completed = self.num_cmds - self.commands.len();
+			((completed as f64 / self.num_cmds as f64) * 100.0).round() as u32
+		}
+	}
+	pub fn start_next_command(&mut self) -> anyhow::Result<()> {
+		if let Some(mut cmd) = self.commands.pop_front() {
+			cmd.stdout(Stdio::piped());
+			cmd.stderr(Stdio::piped());
+			let mut child = cmd.spawn()?;
+			self.stdout_reader = child.stdout.take().map(BufReader::new);
+			self.stderr_reader = child.stderr.take().map(BufReader::new);
+			self.current_child = Some(child);
+		}
+		Ok(())
+	}
+	pub fn read_output(&mut self) -> anyhow::Result<()> {
+		let mut line = String::new();
+		if let Some(stdout) = self.stdout_reader.as_mut() {
+			while stdout.read_line(&mut line)? > 0 {
+				self.content.push(Line::from(Span::styled(
+					line.trim_end().to_string(),
+					Style::default(),
+				)));
+				line.clear();
+			}
+		}
+
+		if let Some(stderr) = self.stderr_reader.as_mut() {
+			while stderr.read_line(&mut line)? > 0 {
+				self.content.push(Line::from(Span::styled(
+					line.trim_end().to_string(),
+					Style::default(),
+				)));
+				line.clear();
+			}
+		}
+
+		Ok(())
+	}
+	pub fn tick(&mut self) -> anyhow::Result<()> {
+		if !self.running && !self.error {
+			self.start_next_command()?;
+			self.running = true;
+		}
+
+		if self.current_child.is_some() {
+			self.read_output()?;
+		}
+
+		if let Some(child) = &mut self.current_child {
+
+			if let Some(status) = child.try_wait()? {
+				self.current_child = None;
+				self.stdout_reader = None;
+				self.stderr_reader = None;
+				self.running = false;
+				if !status.success() {
+					self.content.push(Line::from(Span::styled(
+						format!("Command exited with status: {}", status),
+						Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+					)));
+					self.error = true;
+				}
+			}
+		}
+		Ok(())
+	}
+}
+
+impl<'a> ConfigWidget for ShellBox<'a> {
+	fn handle_input(&mut self, _key: KeyEvent) -> Signal {
+		Signal::Wait
+	}
+	fn render(&self, f: &mut Frame, area: Rect) {
+		let height = area.height as usize;
+		let content_len = self.content.len();
+		let mut lines = vec![];
+
+		if content_len < height {
+			let padding_lines = height - (content_len + 2);
+			lines.extend(std::iter::repeat(Line::from("")).take(padding_lines));
+		}
+
+		lines.extend(self.content.iter().cloned());
+
+		let paragraph = Paragraph::new(lines)
+			.block(Block::default().title(self.title.clone()).borders(Borders::ALL))
+			.wrap(ratatui::widgets::Wrap { trim: true });
+
+		f.render_widget(paragraph, area);
+	}
+	fn focus(&mut self) {
+		// ShellBox does not need focus
+	}
+	fn unfocus(&mut self) {
+		// ShellBox does not need focus
+	}
+	fn is_focused(&self) -> bool {
+		false
+	}
+}
+
+
+
+
 
 #[derive(Debug, Clone)]
 pub struct TableRow {
@@ -1257,5 +1399,49 @@ impl<'a> HelpModal<'a> {
 			.wrap(ratatui::widgets::Wrap { trim: true });
 
 		f.render_widget(help_paragraph, popup_area);
+	}
+}
+
+pub struct ProgressBar {
+	message: String,
+	progress: u32, // 0-100
+}
+
+impl ProgressBar {
+	pub fn new(message: impl Into<String>, progress: u32) -> Self {
+		Self {
+			message: message.into(),
+			progress,
+		}
+	}
+	pub fn set_progress(&mut self, progress: u32) {
+		self.progress = progress.clamp(0, 100);
+	}
+}
+
+impl ConfigWidget for ProgressBar {
+	fn handle_input(&mut self, _key: KeyEvent) -> Signal {
+		Signal::Wait
+	}
+	fn render(&self, f: &mut Frame, area: Rect) {
+		let gauge = Gauge::default()
+			.block(Block::default().title(self.message.clone()).borders(Borders::ALL))
+			.gauge_style(
+				Style::default()
+					.fg(Color::Green)
+					.bg(Color::Black)
+					.add_modifier(Modifier::BOLD),
+			)
+			.percent(self.progress as u16);
+		f.render_widget(gauge, area);
+	}
+	fn focus(&mut self) {
+		// ProgressBar does not need focus
+	}
+	fn unfocus(&mut self) {
+		// ProgressBar does not need focus
+	}
+	fn is_focused(&self) -> bool {
+		false
 	}
 }

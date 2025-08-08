@@ -1,9 +1,9 @@
 use std::{fmt::{Debug, Display}, io::Write, process::{Command, Stdio}};
 
-use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Constraint, Direction, Layout, Rect}, style::{Color, Modifier}, text::Line, Frame};
+use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Constraint, Direction, Layout, Rect}, style::{Color, Modifier, Style}, text::Line, widgets::{Block, Borders, Paragraph, Wrap}, prelude::Alignment, Frame};
 use serde_json::Value;
 
-use crate::{drives::{part_table, Disk, DiskItem}, installer::{systempkgs::NIXPKGS, users::User}, styled_block, widget::{Button, CheckBox, ConfigWidget, HelpModal, InfoBox, LineEditor, StrList, WidgetBox, WidgetBoxBuilder}};
+use crate::{drives::{part_table, Disk, DiskItem}, installer::{systempkgs::NIXPKGS, users::User}, styled_block, widget::{Button, CheckBox, ConfigWidget, HelpModal, InfoBox, LineEditor, ProgressBar, ShellBox, StrList, WidgetBox, WidgetBoxBuilder}};
 
 const HIGHLIGHT: Option<(Color,Modifier)> = Some((Color::Yellow, Modifier::BOLD));
 
@@ -613,7 +613,12 @@ impl Page for Menu {
 					}
 				} else if self.button_row.is_focused() {
 					match self.button_row.selected_child() {
-						Some(0) => Signal::WriteCfg, // Done
+						Some(0) => { // Done - Show config preview
+							match ConfigPreview::new(installer) {
+								Ok(preview) => Signal::Push(Box::new(preview)),
+								Err(e) => Signal::Error(e),
+							}
+						}
 						Some(1) => Signal::Quit,     // Abort
 						_ => Signal::Wait,
 					}
@@ -2642,6 +2647,368 @@ impl Page for Timezone {
 				Signal::Pop
 			}
 			_ => self.timezones.handle_input(event)
+		}
+	}
+}
+
+pub struct ConfigPreview {
+	system_config: String,
+	disko_config: String,
+	flake_path: Option<String>,
+	scroll_position: usize,
+	button_row: WidgetBox,
+	current_view: ConfigView,
+	help_modal: HelpModal<'static>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ConfigView {
+	System,
+	Disko,
+}
+
+impl ConfigPreview {
+	pub fn new(installer: &Installer) -> anyhow::Result<Self> {
+		// Generate the configuration like the main app does
+		let config_json = installer.to_json()?;
+		let output_dir = std::path::PathBuf::from("./nixos-config");
+		let use_flake = installer.enable_flakes;
+		let serializer = crate::nix::NixWriter::new(config_json, output_dir, use_flake);
+
+		let configs = serializer.write_configs()?;
+
+		let buttons: Vec<Box<dyn ConfigWidget>> = vec![
+			Box::new(Button::new("Save & Exit")),
+			Box::new(Button::new("Back")),
+		];
+		let button_row = WidgetBoxBuilder::new()
+			.children(buttons)
+			.build();
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "1/2"), (None, " - Switch between System/Disko config")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Scroll config content")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Page Up/Down"), (None, " - Scroll page by page")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Tab"), (None, " - Switch to buttons")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Activate selected button")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Go back to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Review the generated NixOS configuration before saving.")],
+		]);
+		let help_modal = HelpModal::new("Config Preview", help_content);
+
+
+		Ok(Self {
+			system_config: configs.system,
+			disko_config: configs.disko,
+			flake_path: configs.flake_path,
+			scroll_position: 0,
+			button_row,
+			current_view: ConfigView::System,
+			help_modal
+		})
+	}
+}
+
+impl Page for ConfigPreview {
+	fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
+		let chunks = Layout::default()
+			.direction(Direction::Vertical)
+			.margin(1)
+			.constraints([
+				Constraint::Length(3),  // Tab bar
+				Constraint::Min(0),     // Config content
+				Constraint::Length(3),  // Buttons
+			])
+			.split(area);
+
+		// Tab bar for switching between system and disko config
+		let tab_chunks = Layout::default()
+			.direction(Direction::Horizontal)
+			.constraints([
+				Constraint::Percentage(50),
+				Constraint::Percentage(50),
+			])
+			.split(chunks[0]);
+
+		// System config tab
+		let system_tab_style = if self.current_view == ConfigView::System {
+			Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+		} else {
+			Style::default().fg(Color::Gray)
+		};
+		let system_tab = Paragraph::new("System Config [1]")
+			.style(system_tab_style)
+			.alignment(Alignment::Center)
+			.block(Block::default().borders(Borders::ALL));
+		f.render_widget(system_tab, tab_chunks[0]);
+
+		// Disko config tab
+		let disko_tab_style = if self.current_view == ConfigView::Disko {
+			Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+		} else {
+			Style::default().fg(Color::Gray)
+		};
+		let disko_tab = Paragraph::new("Disko Config [2]")
+			.style(disko_tab_style)
+			.alignment(Alignment::Center)
+			.block(Block::default().borders(Borders::ALL));
+		f.render_widget(disko_tab, tab_chunks[1]);
+
+		// Config content
+		let config_content = match self.current_view {
+			ConfigView::System => &self.system_config,
+			ConfigView::Disko => &self.disko_config,
+		};
+
+		let lines: Vec<&str> = config_content.lines().collect();
+		let visible_lines = chunks[1].height as usize - 2; // Account for borders
+
+		let start_line = self.scroll_position;
+		let end_line = std::cmp::min(start_line + visible_lines, lines.len());
+
+		let display_lines: Vec<Line> = lines[start_line..end_line]
+			.iter()
+			.map(|line| Line::from(*line))
+			.collect();
+
+		let config_paragraph = Paragraph::new(display_lines)
+			.block(Block::default()
+				.borders(Borders::ALL)
+				.title(format!("Preview - {} Config (Scroll: {}/{})",
+					match self.current_view {
+						ConfigView::System => "System",
+						ConfigView::Disko => "Disko",
+					},
+					start_line + 1,
+					lines.len().saturating_sub(visible_lines).max(1))))
+			.wrap(Wrap { trim: false });
+		f.render_widget(config_paragraph, chunks[1]);
+
+		// Buttons
+		self.button_row.render(f, chunks[2]);
+
+		// Help modal
+		self.help_modal.render(f, area);
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "1/2"), (None, " - Switch between System/Disko config")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Scroll config content")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Page Up/Down"), (None, " - Scroll page by page")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Tab"), (None, " - Switch to buttons")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Activate selected button")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Go back to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Review the generated NixOS configuration before saving.")],
+		]);
+		("Config Preview".to_string(), help_content)
+	}
+
+	fn handle_input(&mut self, _installer: &mut Installer, event: KeyEvent) -> Signal {
+		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
+			KeyCode::Char('1') => {
+				self.current_view = ConfigView::System;
+				self.scroll_position = 0;
+				Signal::Wait
+			}
+			KeyCode::Char('2') => {
+				self.current_view = ConfigView::Disko;
+				self.scroll_position = 0;
+				Signal::Wait
+			}
+			KeyCode::Up | KeyCode::Char('k') => {
+				if self.button_row.is_focused() {
+					self.button_row.unfocus();
+				} else if self.scroll_position > 0 {
+					self.scroll_position -= 1;
+				}
+				Signal::Wait
+			}
+			KeyCode::Down | KeyCode::Char('j') => {
+				let config_content = match self.current_view {
+					ConfigView::System => &self.system_config,
+					ConfigView::Disko => &self.disko_config,
+				};
+				let max_scroll = config_content.lines().count().saturating_sub(1);
+				if self.scroll_position < max_scroll {
+					self.scroll_position += 1;
+				}
+				Signal::Wait
+			}
+			KeyCode::Right | KeyCode::Char('l') => {
+				if self.button_row.is_focused() {
+					if !self.button_row.next_child() {
+						self.button_row.first_child();
+					}
+				} else if self.current_view == ConfigView::System {
+					self.current_view = ConfigView::Disko;
+					self.scroll_position = 0;
+				} else if self.current_view == ConfigView::Disko {
+					self.current_view = ConfigView::System;
+					self.scroll_position = 0;
+				}
+
+				Signal::Wait
+			}
+			KeyCode::Left | KeyCode::Char('h') => {
+				if self.button_row.is_focused() {
+					if !self.button_row.prev_child() {
+						self.button_row.last_child();
+					}
+				} else if self.current_view == ConfigView::Disko {
+					self.current_view = ConfigView::System;
+					self.scroll_position = 0;
+				} else if self.current_view == ConfigView::System {
+					self.current_view = ConfigView::Disko;
+					self.scroll_position = 0;
+				}
+
+				Signal::Wait
+			}
+			KeyCode::PageUp => {
+				self.scroll_position = self.scroll_position.saturating_sub(10);
+				Signal::Wait
+			}
+			KeyCode::PageDown => {
+				let config_content = match self.current_view {
+					ConfigView::System => &self.system_config,
+					ConfigView::Disko => &self.disko_config,
+				};
+				let max_scroll = config_content.lines().count().saturating_sub(1);
+				self.scroll_position = std::cmp::min(self.scroll_position + 10, max_scroll);
+				Signal::Wait
+			}
+			KeyCode::Tab => {
+				self.button_row.focus();
+				Signal::Wait
+			}
+			KeyCode::Enter => {
+				if self.button_row.is_focused() {
+					match self.button_row.selected_child() {
+						Some(0) => Signal::WriteCfg, // Save & Exit
+						Some(1) => Signal::Pop,      // Back
+						_ => Signal::Wait,
+					}
+				} else {
+					Signal::Wait
+				}
+			}
+			KeyCode::Esc => Signal::Pop,
+			_ => {
+				if self.button_row.is_focused() {
+					self.button_row.handle_input(event)
+				} else {
+					Signal::Wait
+				}
+			}
+		}
+	}
+}
+
+pub struct InstallProgress<'a> {
+	shellwindow: ShellBox<'a>,
+	progress_bar: ProgressBar,
+	help_modal: HelpModal<'static>,
+}
+
+impl<'a> InstallProgress<'a> {
+	pub fn new() -> anyhow::Result<Self> {
+		let commands = vec![
+			{ let mut c = Command::new("echo"); c.arg("foo"); c },
+			{ let mut c = Command::new("sleep"); c.arg("1"); c },
+			{  Command::new("false") },
+			{ let mut c = Command::new("echo"); c.arg("bar"); c },
+			{ let mut c = Command::new("sleep"); c.arg("1"); c },
+			{ let mut c = Command::new("echo"); c.arg("baz"); c },
+			{ let mut c = Command::new("sleep"); c.arg("1"); c },
+		];
+		let shellwindow = ShellBox::new("Installation", commands);
+		let progress_bar = ProgressBar::new("Progress", 0);
+
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Scroll through command output")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Page Up/Down"), (None, " - Scroll output page by page")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Home/End"), (None, " - Jump to beginning/end of output")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Exit installation (if completed)")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "This page shows the progress of the NixOS installation process.")],
+			vec![(None, "If any commands fail during this process, the installation will stop.")],
+		]);
+		let help_modal = HelpModal::new("Installation Progress", help_content);
+
+		Ok(Self { shellwindow, progress_bar, help_modal })
+	}
+}
+
+impl<'a> Page for InstallProgress<'a> {
+	fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
+		let _ = self.shellwindow.tick();
+		let progress = self.shellwindow.progress();
+		self.progress_bar.set_progress(progress);
+		let chunks = Layout::default()
+			.direction(Direction::Vertical)
+			.margin(1)
+			.constraints(
+				[
+				Constraint::Min(0),
+				Constraint::Length(3),
+				]
+				.as_ref(),
+			)
+			.split(area);
+		self.shellwindow.render(f, chunks[0]);
+		self.progress_bar.render(f, chunks[1]);
+
+		// Help modal
+		self.help_modal.render(f, area);
+	}
+
+	fn get_help_content(&self) -> (String, Vec<Line>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Scroll through command output")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Page Up/Down"), (None, " - Scroll output page by page")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Home/End"), (None, " - Jump to beginning/end of output")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Exit installation (if completed)")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Watch the progress as NixOS installs. Commands run")],
+			vec![(None, "sequentially and their output is logged above.")],
+		]);
+		("Installation Progress".to_string(), help_content)
+	}
+
+	fn handle_input(&mut self, _installer: &mut Installer, event: KeyEvent) -> Signal {
+		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			KeyCode::Esc if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
+			KeyCode::Esc => Signal::Pop,
+			_ => {
+				self.shellwindow.handle_input(event)
+			}
 		}
 	}
 }

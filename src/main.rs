@@ -8,7 +8,7 @@ use ratatui::crossterm::event::{self, Event, KeyCode};
 use serde_json::Value;
 use std::time::{Duration, Instant};
 
-use crate::installer::{systempkgs::init_nixpkgs, Installer, Menu, Page, Signal};
+use crate::installer::{systempkgs::init_nixpkgs, InstallProgress, Installer, Menu, Page, Signal};
 
 pub mod installer;
 pub mod widget;
@@ -123,6 +123,8 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 
 	let tick_rate = Duration::from_millis(250);
 	let mut last_tick = Instant::now();
+
+	page_stack.push(Box::new(InstallProgress::new()?));
 
 	loop {
 		terminal.draw(|f| {
