@@ -23,7 +23,7 @@ A terminal-based installer for NixOS, similar to `archinstall` for Arch Linux. T
 ## Requirements
 
 - Must be run as root
-- Depends on several NixOS-specific commands, like `nixos-install` and `nixos-generate-config`. It is recommended to run this in a live NixOS installer environment.
+- Depends on several NixOS-specific commands, like `nixos-install` and `nixos-generate-config`. It is recommended to run this in the live environment provided by the flake. This live environment iso is also included in each release.
 - Terminal with proper color support
 
 ## Building
