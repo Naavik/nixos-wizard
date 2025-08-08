@@ -54,5 +54,5 @@ The project includes configuration for building custom NixOS installer ISOs that
 
 ```bash
 # Build installer ISO
-nix build .#nixosConfigurations.installerIso.config.system.build.isoImage
+nix build github:km-clay/nixos-wizard#nixosConfigurations.installerIso.config.system.build.isoImage
 ```
