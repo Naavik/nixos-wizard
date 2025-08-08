@@ -1,5 +1,9 @@
-use std::{collections::VecDeque, io::{BufRead, BufReader}, process::{Command, Stdio}};
+use std::{collections::VecDeque, io::{BufRead, BufReader, Read}, os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd}, process::{Child, ChildStderr, ChildStdout, Command, Stdio}};
+use portable_pty::{PtySize, CommandBuilder};
+use throbber_widgets_tui::{Throbber, ThrobberState, BOX_DRAWING, BRAILLE_EIGHT};
+use throbber_widgets_tui::symbols::throbber::BRAILLE_SIX;
 
+use ansi_to_tui::IntoText;
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use itertools::Itertools;
 use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Alignment, Constraint, Layout, Rect}, style::{Color, Modifier, Style}, text::{Line, Span}, widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Table, TableState, Widget}, Frame};
@@ -187,7 +191,7 @@ impl ConfigWidget for WidgetBox {
 	}
 
 	fn focus(&mut self) {
-	  self.focused = true;
+		self.focused = true;
 		let Some(idx) = self.focused_child else {
 			self.focused_child = Some(0);
 			self.widgets[0].focus();
@@ -318,11 +322,11 @@ impl ConfigWidget for CheckBox {
 
 		let checkbox_char = if self.checked { "[x]" } else { "[ ]" };
 		let content = Paragraph::new(Span::styled(
-			format!("{} {}", checkbox_char, self.label),
-			style,
+				format!("{} {}", checkbox_char, self.label),
+				style,
 		))
-		.alignment(Alignment::Center)
-		.block(Block::default().style(style));
+			.alignment(Alignment::Center)
+			.block(Block::default().style(style));
 
 		f.render_widget(content, area);
 	}
@@ -376,11 +380,11 @@ impl ConfigWidget for Button {
 		};
 
 		let content = Paragraph::new(Span::styled(
-			format!(" {} ", self.label),
-			style,
+				format!(" {} ", self.label),
+				style,
 		))
-		.alignment(Alignment::Center)
-		.block(Block::default().style(style));
+			.alignment(Alignment::Center)
+			.block(Block::default().style(style));
 
 		f.render_widget(content, area);
 	}
@@ -591,17 +595,17 @@ impl ConfigWidget for LineEditor {
 			.direction(ratatui::layout::Direction::Vertical)
 			.constraints(
 				vec![
-					Constraint::Min(3),
-					Constraint::Length(3)
+				Constraint::Min(3),
+				Constraint::Length(3)
 				]
 			)
 			.split(area);
 		if let Some(err) = &self.error {
 			let error_paragraph = Paragraph::new(Span::styled(
-				err.clone(),
-				Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+					err.clone(),
+					Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
 			))
-			.block(Block::default());
+				.block(Block::default());
 			f.render_widget(error_paragraph, chunks[1]);
 		}
 		let paragraph = self.as_widget();
@@ -609,18 +613,18 @@ impl ConfigWidget for LineEditor {
 	}
 
 	fn focus(&mut self) {
-	  self.focused = true;
-	  if self.cursor > self.value.len() {
-		  self.cursor = self.value.len();
-	  }
+		self.focused = true;
+		if self.cursor > self.value.len() {
+			self.cursor = self.value.len();
+		}
 	}
 
 	fn is_focused(&self) -> bool {
-	  self.focused
+		self.focused
 	}
 
 	fn unfocus(&mut self) {
-	  self.focused = false;
+		self.focused = false;
 	}
 
 	fn get_value(&self) -> Option<Value> {
@@ -719,7 +723,7 @@ impl StrList {
 					matcher.fuzzy_match(item, &f)
 						.map(|score| (i, score))
 				})
-				.collect();
+			.collect();
 			results.sort_unstable_by(|a, b| b.1.cmp(&a.1));
 			self.filtered_items = results.into_iter().map(|(i,_)| StrListItem { idx: i }).collect();
 		} else {
@@ -927,7 +931,7 @@ impl ConfigWidget for StrList {
 				let item = &self.items[idx];
 				ListItem::new(Span::raw(format!("{prefix}{item}")))
 			})
-			.collect();
+		.collect();
 
 		let mut state = ListState::default();
 		state.select(Some(self.selected_idx));
@@ -951,7 +955,7 @@ impl ConfigWidget for StrList {
 		self.focused = false;
 	}
 	fn is_focused(&self) -> bool {
-	  self.focused
+		self.focused
 	}
 }
 
@@ -990,6 +994,381 @@ impl<'a> ConfigWidget for InfoBox<'a> {
 	}
 }
 
+impl From<Vec<Command>> for ShellCommand {
+	fn from(cmds: Vec<Command>) -> Self {
+		ShellCommand::new(cmds).unwrap()
+	}
+}
+
+pub enum ChildProcess {
+	Standard(Child),
+	Pty(Box<dyn portable_pty::Child + Send + Sync>),
+}
+
+pub struct ShellCommand {
+	pub commands: Option<Vec<Command>>,
+	pub child_procs: Option<Vec<ChildProcess>>,
+	pub pty_pair: Option<portable_pty::PtyPair>,
+}
+
+impl ShellCommand {
+	pub fn new(commands: Vec<Command>) -> anyhow::Result<Self> {
+		Ok(Self {
+			commands: Some(commands),
+			child_procs: None,
+			pty_pair: None,
+		})
+	}
+	pub fn run_pipeline(&mut self) -> anyhow::Result<()> {
+		let Some(cmds) = self.commands.take() else {
+			return Err(anyhow::anyhow!("No commands to run"));
+		};
+
+		// Create PTY for terminal isolation
+		let pty_system = portable_pty::native_pty_system();
+		let pty_pair = pty_system.openpty(PtySize {
+			rows: 24,
+			cols: 80,
+			pixel_width: 0,
+			pixel_height: 0,
+		})?;
+
+		let mut child_procs = vec![];
+		let len = cmds.len();
+
+		if len == 1 {
+			// Single command - use PTY directly
+			let cmd = cmds.into_iter().next().unwrap();
+			let mut cmd_builder = CommandBuilder::new(cmd.get_program());
+			cmd_builder.args(cmd.get_args());
+			let child = pty_pair.slave.spawn_command(cmd_builder)?;
+			child_procs.push(ChildProcess::Pty(child));
+		} else {
+			// Multiple commands - still need pipes between them, but last one uses PTY
+			let mut pipes: Vec<(Option<OwnedFd>, Option<OwnedFd>)> = vec![];
+
+			for _ in 0..len - 1 {
+				let (r,w) = nix::unistd::pipe()?;
+				pipes.push((Some(r),Some(w)))
+			}
+
+			for (i, mut cmd) in cmds.into_iter().enumerate() {
+				let stdin = if i == 0 {
+					Stdio::piped()
+				} else {
+					let Some(pipe) = pipes[i - 1].0.take() else {
+						unreachable!()
+					};
+					unsafe { Stdio::from_raw_fd(pipe.into_raw_fd()) }
+				};
+
+				if i == len - 1 {
+					// Last command in pipeline - use PTY
+					let mut cmd_builder = CommandBuilder::new(cmd.get_program());
+					cmd_builder.args(cmd.get_args());
+					// Set up stdin for PTY command - need to convert from Stdio to proper fd
+					let child = pty_pair.slave.spawn_command(cmd_builder)?;
+					child_procs.push(ChildProcess::Pty(child));
+				} else {
+					// Intermediate command - use regular pipe
+					let stdout = {
+						let Some(pipe) = pipes[i].1.take() else {
+							unreachable!()
+						};
+						unsafe { Stdio::from_raw_fd(pipe.into_raw_fd()) }
+					};
+					let child = cmd.stdin(stdin).stdout(stdout).spawn()?;
+					child_procs.push(ChildProcess::Standard(child));
+				}
+			}
+		}
+
+		self.pty_pair = Some(pty_pair);
+		self.child_procs = Some(child_procs);
+		Ok(())
+	}
+
+	pub fn single(cmd: Command) -> anyhow::Result<Self> {
+		Self::new(vec![cmd])
+	}
+
+	pub fn nom(cmd: Command) -> anyhow::Result<Self> {
+		let nom = Command::new("nom");
+		Self::new(vec![cmd, nom])
+	}
+
+	pub fn stdin(&mut self) -> Option<&mut std::process::ChildStdin> {
+		match self.child_procs.as_mut()?.first_mut()? {
+			ChildProcess::Standard(child) => child.stdin.as_mut(),
+			ChildProcess::Pty(_) => None, // PTY handles stdin differently
+		}
+	}
+	pub fn take_stdin(&mut self) -> Option<std::process::ChildStdin> {
+		match self.child_procs.as_mut()?.first_mut()? {
+			ChildProcess::Standard(child) => child.stdin.take(),
+			ChildProcess::Pty(_) => None, // PTY handles stdin differently
+		}
+	}
+
+	pub fn stdout(&mut self) -> Option<&mut std::process::ChildStdout> {
+		match self.child_procs.as_mut()?.last_mut()? {
+			ChildProcess::Standard(child) => child.stdout.as_mut(),
+			ChildProcess::Pty(_) => None, // PTY handles this through the master
+		}
+	}
+	pub fn take_stdout(&mut self) -> Option<std::process::ChildStdout> {
+		match self.child_procs.as_mut()?.last_mut()? {
+			ChildProcess::Standard(child) => child.stdout.take(),
+			ChildProcess::Pty(_) => None, // PTY handles this through the master
+		}
+	}
+
+	pub fn stderr(&mut self) -> Option<&mut std::process::ChildStderr> {
+		match self.child_procs.as_mut()?.last_mut()? {
+			ChildProcess::Standard(child) => child.stderr.as_mut(),
+			ChildProcess::Pty(_) => None, // PTY handles this through the master
+		}
+	}
+	pub fn take_stderr(&mut self) -> Option<std::process::ChildStderr> {
+		match self.child_procs.as_mut()?.last_mut()? {
+			ChildProcess::Standard(child) => child.stderr.take(),
+			ChildProcess::Pty(_) => None, // PTY handles this through the master
+		}
+	}
+
+	pub fn take_pty_reader(&mut self) -> Option<Box<dyn Read + Send>> {
+		self.pty_pair.take().map(|pty| pty.master.try_clone_reader().unwrap())
+	}
+
+	pub fn wait_all(&mut self) -> anyhow::Result<Vec<std::process::ExitStatus>> {
+		let Some(children) = self.child_procs.as_mut() else {
+			return Err(anyhow::anyhow!("No child processes to wait for"));
+		};
+		let mut results = Vec::with_capacity(children.len());
+		for child in children {
+			match child {
+				ChildProcess::Standard(child) => {
+					results.push(child.wait()?);
+				}
+				ChildProcess::Pty(child) => {
+					// portable_pty::Child has different interface - convert to ExitStatus
+					let exit_status = child.wait()?;
+					// Convert portable_pty exit status to std::process::ExitStatus
+					// This is tricky since ExitStatus can't be constructed directly
+					// For now, let's use a workaround
+					if exit_status.success() {
+						// Create a successful status by running "true"
+						let status = std::process::Command::new("true").status()?;
+						results.push(status);
+					} else {
+						// Create a failed status by running "false"
+						let status = std::process::Command::new("false").status()?;
+						results.push(status);
+					}
+				}
+			}
+		}
+		Ok(results)
+	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StepStatus {
+	Inactive,
+	Running,
+	Completed,
+	Failed,
+}
+
+pub struct InstallSteps<'a> {
+	pub title: String,
+	pub commands: VecDeque<(Line<'a>, VecDeque<Command>)>,
+	pub steps: Vec<(Line<'a>, StepStatus)>,
+	pub num_steps: usize,
+	pub current_step_index: usize,
+	pub throbber_state: ThrobberState,
+	pub running: bool,
+	pub error: bool,
+	current_step_commands: Option<VecDeque<Command>>,
+	current_command: Option<Child>,
+}
+
+impl<'a> InstallSteps<'a> {
+	pub fn new(title: impl Into<String>, commands: impl IntoIterator<Item = (Line<'a>, VecDeque<Command>)>) -> Self {
+		let commands = commands.into_iter().collect::<VecDeque<_>>();
+		let steps = commands.iter().map(|(line, _)| (line.clone(), StepStatus::Inactive)).collect();
+		let num_steps = commands.len();
+
+		Self {
+			title: title.into(),
+			commands,
+			steps,
+			num_steps,
+			current_step_index: 0,
+			throbber_state: ThrobberState::default(),
+			running: false,
+			error: false,
+			current_step_commands: None,
+			current_command: None,
+		}
+	}
+
+	pub fn progress(&self) -> f64 {
+		if self.num_steps == 0 {
+			1.0
+		} else {
+			self.current_step_index as f64 / self.num_steps as f64
+		}
+	}
+
+	pub fn start_next_step(&mut self) -> anyhow::Result<()> {
+		// If we have a current step still running, don't start a new one
+		if self.current_step_commands.is_some() {
+			return Ok(());
+		}
+
+		// Get the next step
+		if let Some((_line, commands)) = self.commands.pop_front() {
+			// Update step status
+			if self.current_step_index < self.steps.len() {
+				self.steps[self.current_step_index].1 = StepStatus::Running;
+			}
+
+			// Store the commands for this step
+			self.current_step_commands = Some(commands);
+		}
+		Ok(())
+	}
+
+	pub fn start_next_command(&mut self) -> anyhow::Result<()> {
+		// Get the next command from the current step
+		if let Some(commands) = self.current_step_commands.as_mut() {
+			if let Some(mut cmd) = commands.pop_front() {
+				// Redirect all output to /dev/null
+				let null = std::fs::File::create("/dev/null")?;
+				cmd.stdout(Stdio::from(null.try_clone()?))
+				   .stderr(Stdio::from(null))
+				   .stdin(Stdio::null());
+
+				let child = cmd.spawn()?;
+				self.current_command = Some(child);
+			}
+		}
+		Ok(())
+	}
+
+	pub fn tick(&mut self) -> anyhow::Result<()> {
+		if !self.running && !self.error {
+			self.start_next_step()?;
+			self.running = true;
+		}
+
+		if self.running {
+			self.throbber_state.calc_next();
+		}
+
+		// If no command is currently running, try to start the next one
+		if self.current_command.is_none() && self.current_step_commands.is_some() {
+			self.start_next_command()?;
+		}
+
+		if let Some(child) = &mut self.current_command {
+			if let Ok(Some(status)) = child.try_wait() {
+				self.current_command = None;
+
+				if !status.success() {
+					// Command failed - mark current step as failed
+					if self.current_step_index < self.steps.len() {
+						self.steps[self.current_step_index].1 = StepStatus::Failed;
+					}
+					self.error = true;
+					self.running = false;
+					return Ok(());
+				}
+
+				// Command succeeded - check if there are more commands in this step
+				if let Some(commands) = &self.current_step_commands {
+					if commands.is_empty() {
+						// Step completed successfully
+						if self.current_step_index < self.steps.len() {
+							self.steps[self.current_step_index].1 = StepStatus::Completed;
+						}
+						self.current_step_commands = None;
+						self.current_step_index += 1;
+						self.running = false;
+
+						// Check if we're completely done
+						if self.commands.is_empty() {
+							self.running = false;
+						}
+					}
+					// If there are more commands in this step, they'll be started on next tick
+				}
+			}
+		}
+		Ok(())
+	}
+
+	pub fn is_complete(&self) -> bool {
+		!self.running && !self.error && self.commands.is_empty() && self.current_step_commands.is_none()
+	}
+
+	pub fn has_error(&self) -> bool {
+		self.error
+	}
+}
+
+impl<'a> ConfigWidget for InstallSteps<'a> {
+	fn handle_input(&mut self, _key: KeyEvent) -> Signal {
+		Signal::Wait
+	}
+
+	fn render(&self, f: &mut Frame, area: Rect) {
+		let mut lines = Vec::new();
+
+		for (step_line, status) in self.steps.iter() {
+			let (prefix, style) = match status {
+				StepStatus::Inactive => ("  ", Style::default().fg(Color::DarkGray)),
+				StepStatus::Running => {
+					let idx = (self.throbber_state.index() % 8) as usize;
+					let throbber_symbol = BRAILLE_EIGHT.symbols[idx];
+					(throbber_symbol, Style::default().fg(Color::Cyan))
+				},
+				StepStatus::Completed => ("✓ ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+				StepStatus::Failed => ("✗ ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+			};
+
+			let mut step_spans = vec![Span::styled(prefix, style)];
+			step_spans.extend(step_line.spans.iter().cloned().map(|mut span| {
+				if *status == StepStatus::Inactive {
+					span.style = span.style.fg(Color::DarkGray);
+				}
+				span
+			}));
+
+			lines.push(Line::from(step_spans));
+		}
+
+		let paragraph = Paragraph::new(lines)
+			.block(Block::default().title(self.title.clone()).borders(Borders::ALL))
+			.wrap(ratatui::widgets::Wrap { trim: true });
+
+		f.render_widget(paragraph, area);
+	}
+
+	fn focus(&mut self) {
+		// InstallSteps does not need focus
+	}
+
+	fn unfocus(&mut self) {
+		// InstallSteps does not need focus
+	}
+
+	fn is_focused(&self) -> bool {
+		false
+	}
+}
+
 /// Like infobox, except it runs a bunch of commands
 /// and the content is the lines produced by the output of those commands
 /// commands is a vecdeque of unspawned std::process::Commands
@@ -1000,9 +1379,9 @@ pub struct ShellBox<'a> {
 	pub content: Vec<Line<'a>>,
 	pub running: bool,
 	pub error: bool,
-	current_child: Option<std::process::Child>,
-	stdout_reader: Option<BufReader<std::process::ChildStdout>>,
-	stderr_reader: Option<BufReader<std::process::ChildStderr>>,
+	current_command: Option<Child>,
+	stdout_reader: Option<BufReader<ChildStdout>>,
+	stderr_reader: Option<BufReader<ChildStderr>>,
 }
 
 impl<'a> ShellBox<'a> {
@@ -1015,7 +1394,7 @@ impl<'a> ShellBox<'a> {
 			content: vec![],
 			running: false,
 			error: false,
-			current_child: None,
+			current_command: None,
 			stdout_reader: None,
 			stderr_reader: None,
 		}
@@ -1031,33 +1410,31 @@ impl<'a> ShellBox<'a> {
 	}
 	pub fn start_next_command(&mut self) -> anyhow::Result<()> {
 		if let Some(mut cmd) = self.commands.pop_front() {
-			cmd.stdout(Stdio::piped());
-			cmd.stderr(Stdio::piped());
 			let mut child = cmd.spawn()?;
+			// Use PTY reader if available, otherwise fall back to stdout/stderr
 			self.stdout_reader = child.stdout.take().map(BufReader::new);
 			self.stderr_reader = child.stderr.take().map(BufReader::new);
-			self.current_child = Some(child);
+			self.current_command = Some(child);
 		}
 		Ok(())
 	}
 	pub fn read_output(&mut self) -> anyhow::Result<()> {
 		let mut line = String::new();
+
+		// Read from PTY if available (preferred)
+		// Fall back to separate stdout/stderr readers
 		if let Some(stdout) = self.stdout_reader.as_mut() {
 			while stdout.read_line(&mut line)? > 0 {
-				self.content.push(Line::from(Span::styled(
-					line.trim_end().to_string(),
-					Style::default(),
-				)));
+				let text = format!("| {line}").into_text()?;
+				self.content.extend(text.lines);
 				line.clear();
 			}
 		}
 
 		if let Some(stderr) = self.stderr_reader.as_mut() {
 			while stderr.read_line(&mut line)? > 0 {
-				self.content.push(Line::from(Span::styled(
-					line.trim_end().to_string(),
-					Style::default(),
-				)));
+				let text = format!("| {line}").into_text()?;
+				self.content.extend(text.lines);
 				line.clear();
 			}
 		}
@@ -1070,21 +1447,21 @@ impl<'a> ShellBox<'a> {
 			self.running = true;
 		}
 
-		if self.current_child.is_some() {
+		if self.current_command.is_some() {
 			self.read_output()?;
 		}
 
-		if let Some(child) = &mut self.current_child {
+		if let Some(child) = &mut self.current_command {
 
-			if let Some(status) = child.try_wait()? {
-				self.current_child = None;
+			if let Ok(status) = child.wait() {
+				self.current_command = None;
 				self.stdout_reader = None;
 				self.stderr_reader = None;
 				self.running = false;
 				if !status.success() {
 					self.content.push(Line::from(Span::styled(
-						format!("Command exited with status: {}", status),
-						Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+								format!("Installation failed"),
+								Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
 					)));
 					self.error = true;
 				}
@@ -1105,7 +1482,7 @@ impl<'a> ConfigWidget for ShellBox<'a> {
 
 		if content_len < height {
 			let padding_lines = height - (content_len + 2);
-			lines.extend(std::iter::repeat(Line::from("")).take(padding_lines));
+			lines.extend(std::iter::repeat_n(Line::from(""), padding_lines));
 		}
 
 		lines.extend(self.content.iter().cloned());
@@ -1262,7 +1639,6 @@ impl TableWidget {
 impl ConfigWidget for TableWidget {
 	fn handle_input(&mut self, key: KeyEvent) -> Signal {
 		if let Some(idx) = self.selected_row.as_mut() {
-			log::debug!("TableWidget handle_input: key={:?}", key);
 			match key.code {
 				KeyCode::Up | KeyCode::Char('k') => {
 					self.next_row();
@@ -1390,10 +1766,10 @@ impl<'a> HelpModal<'a> {
 		let help_paragraph = Paragraph::new(self.content.clone())
 			.block(
 				Block::default()
-					.title(format!("Help: {} (Press ? or ESC to close)", self.title))
-					.borders(Borders::ALL)
-					.border_style(Style::default().fg(Color::Yellow))
-					.style(Style::default().bg(Color::Black))
+				.title(format!("Help: {} (Press ? or ESC to close)", self.title))
+				.borders(Borders::ALL)
+				.border_style(Style::default().fg(Color::Yellow))
+				.style(Style::default().bg(Color::Black))
 			)
 			.style(Style::default().bg(Color::Black).fg(Color::White))
 			.wrap(ratatui::widgets::Wrap { trim: true });
@@ -1417,6 +1793,9 @@ impl ProgressBar {
 	pub fn set_progress(&mut self, progress: u32) {
 		self.progress = progress.clamp(0, 100);
 	}
+	pub fn set_message(&mut self, message: impl Into<String>) {
+		self.message = message.into();
+	}
 }
 
 impl ConfigWidget for ProgressBar {
@@ -1428,9 +1807,9 @@ impl ConfigWidget for ProgressBar {
 			.block(Block::default().title(self.message.clone()).borders(Borders::ALL))
 			.gauge_style(
 				Style::default()
-					.fg(Color::Green)
-					.bg(Color::Black)
-					.add_modifier(Modifier::BOLD),
+				.fg(Color::Green)
+				.bg(Color::Black)
+				.add_modifier(Modifier::BOLD),
 			)
 			.percent(self.progress as u16);
 		f.render_widget(gauge, area);

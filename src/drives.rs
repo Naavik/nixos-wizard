@@ -3,7 +3,7 @@ use std::{fmt::Display, process::Command, str::FromStr, sync::atomic::AtomicU64}
 use ratatui::layout::Constraint;
 use serde_json::{Map, Value};
 
-use crate::{attrset, merge_attrs, nix::{fmt_nix, nixstr}, widget::TableWidget};
+use crate::{attrset, merge_attrs, widget::TableWidget};
 
 static NEXT_PART_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -16,7 +16,13 @@ pub fn get_entry_id() -> u64 {
 	NEXT_PART_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
-pub fn bytes_disko_cfg(bytes: u64) -> String {
+pub fn bytes_disko_cfg(bytes: u64, total_used_sectors: u64, sector_size: u64, total_size: u64) -> String {
+	let requested_sectors = bytes.div_ceil(sector_size);
+	let is_rest_of_space = (requested_sectors + total_used_sectors) >= (total_size.saturating_sub(2048));
+	if is_rest_of_space {
+		log::debug!("bytes_disko_cfg: using 100% for bytes {}, total_used_sectors {}, sector_size {}, total_size {}", bytes, total_used_sectors, sector_size, total_size);
+		return "100%".into()
+	}
 	const K: f64 = 1000.0;
 	const M: f64 = 1000.0 * K;
 	const G: f64 = 1000.0 * M;
@@ -222,6 +228,7 @@ pub struct Disk {
 	sector_size: u64,
 
 	initial_layout: Vec<DiskItem>,
+	total_used_sectors: u64,
 	/// Model of the disk's sector usage
 	/// The sector spans are `half-open ranges`
 	/// This means the start value is inclusive, and the end (start + size) is exclusive.
@@ -240,6 +247,7 @@ impl Disk {
 			size,
 			sector_size,
 			initial_layout: layout.clone(),
+			total_used_sectors: 0,
 			layout
 		};
 		new.calculate_free_space();
@@ -261,7 +269,7 @@ impl Disk {
 			}
 		}).collect()
 	}
-	pub fn as_disko_cfg(&self) -> serde_json::Value {
+	pub fn as_disko_cfg(&mut self) -> serde_json::Value {
 		let mut partitions = serde_json::Map::new();
 		for item in &self.layout {
 			if let DiskItem::Partition(p) = item {
@@ -271,15 +279,31 @@ impl Disk {
 				let name = p.label()
 					.map(|s| s.to_string())
 					.unwrap_or_else(|| format!("part{}", p.id()));
+				let size = bytes_disko_cfg(
+					p.size_bytes(p.sector_size),
+					self.total_used_sectors,
+					p.sector_size,
+					self.size
+				);
 
-				partitions.insert(name, serde_json::json!({
-					"size": bytes_disko_cfg(p.size_bytes(p.sector_size)),
-					"type": p.fs_gpt_code(p.flags.contains(&"esp".to_string())),
-					"format": p.disko_fs_type(),
-					"mountpoint": p.mount_point(),
-				}));
+				if p.flags.contains(&"esp".to_string()) {
+					partitions.insert(name, serde_json::json!({
+						"size": size,
+						"type": p.fs_gpt_code(p.flags.contains(&"esp".to_string())),
+						"format": p.disko_fs_type(),
+						"mountpoint": p.mount_point(),
+					}));
+				} else {
+					partitions.insert(name, serde_json::json!({
+						"size": size,
+						"format": p.disko_fs_type(),
+						"mountpoint": p.mount_point(),
+					}));
+				}
+				self.total_used_sectors += p.size();
 			}
 		}
+		self.total_used_sectors = 0;
 
 		serde_json::json!({
 			"device": format!("/dev/{}", self.name),

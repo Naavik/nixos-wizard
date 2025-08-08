@@ -102,7 +102,7 @@ impl NixWriter {
 	}
 	pub fn write_sys_config(&self, config: Value) -> anyhow::Result<String> {
 		// initialize the attribute set
-		let mut cfg_attrs = String::from("{}");
+		let mut cfg_attrs = String::from("{imports = [./hardware-configuration.nix];}");
 		let Value::Object(ref cfg) = config else {
 			return Err(anyhow::anyhow!("Config must be a JSON object"));
 		};
@@ -114,14 +114,14 @@ impl NixWriter {
 				"bootloader" => value.as_str().map(Self::parse_bootloader),
 				"desktop_environment" => value.as_str().map(Self::parse_desktop_environment),
 				"enable_flakes" => value.as_bool().filter(|&b| b).map(|_| Self::parse_enable_flakes()),
-				"greeter" => value.as_str().map(Self::parse_greeter),
+				"greeter" => None,
 				"hostname" => value.as_str().map(Self::parse_hostname),
 				"kernels" => value.as_array().map(Self::parse_kernels),
 				"keyboard_layout" => value.as_str().map(Self::parse_kb_layout),
 				"locale" => value.as_str().map(Self::parse_locale),
 				"network_backend" => value.as_str().map(Self::parse_network_backend),
 				"profile" => None,
-				"root_passwd_hash" => None,
+				"root_passwd_hash" => Some(Self::parse_root_pass_hash(value)?),
 				"system_pkgs" => value.as_array().map(Self::parse_system_packages),
 				"timezone" => value.as_str().map(Self::parse_timezone),
 				"use_swap" => value.as_bool().filter(|&b| b).map(|_| Self::parse_swap()),
@@ -175,8 +175,16 @@ impl NixWriter {
 			"content" = content;
 		};
 
-		let raw = format!("{{ disko = {disko_config}; }}");
+		let raw = format!("{{ disko.devices.disk.main = {disko_config}; }}");
 		fmt_nix(raw)
+	}
+
+	fn parse_root_pass_hash(content: &Value) -> anyhow::Result<String> {
+		let hash = content.as_str()
+			.ok_or_else(|| anyhow::anyhow!("Root password hash must be a string"))?;
+		Ok(attrset! {
+			"users.users.root.hashedPassword" = nixstr(hash);
+		})
 	}
 
 	fn parse_disko_content(content: &Value) -> anyhow::Result<String> {
@@ -211,18 +219,29 @@ impl NixWriter {
 			.ok_or_else(|| anyhow::anyhow!("Missing required 'mountpoint' field in partition"))?;
 		let size = partition["size"].as_str()
 			.ok_or_else(|| anyhow::anyhow!("Missing required 'size' field in partition"))?;
-		let part_type = partition["type"].as_str()
-			.ok_or_else(|| anyhow::anyhow!("Missing required 'type' field in partition"))?;
+		let part_type = partition.get("type").and_then(|v| v.as_str());
+		log::debug!("Parsing partition: format={format}, mountpoint={mountpoint}, size={size}, type={:?}", part_type);
 
-		Ok(attrset! {
-			"type" = nixstr("partition");
-			"size" = nixstr(size);
-			"content" = attrset! {
+		if let Some(part_type) = part_type {
+			Ok(attrset! {
 				"type" = nixstr(part_type);
-				"format" = nixstr(format);
-				"mountpoint" = nixstr(mountpoint);
-			};
-		})
+				"size" = nixstr(size);
+				"content" = attrset! {
+					"type" = nixstr("filesystem");
+					"format" = nixstr(format);
+					"mountpoint" = nixstr(mountpoint);
+				};
+			})
+		} else {
+			Ok(attrset! {
+				"size" = nixstr(size);
+				"content" = attrset! {
+					"type" = nixstr("filesystem");
+					"format" = nixstr(format);
+					"mountpoint" = nixstr(mountpoint);
+				};
+			})
+		}
 	}
 	fn parse_timezone(value: &str) -> String {
 		attrset! {
@@ -276,10 +295,26 @@ impl NixWriter {
 			"networking.hostName" = nixstr(value);
 		}
 	}
-	fn parse_greeter(value: &str) -> String {
+	fn parse_greeter(value: &str, de: Option<&str>) -> String {
 		match value.to_lowercase().as_str() {
-			"sddm" => attrset! {
-				"services.displayManager.sddm.enable" = true;
+			"sddm" => {
+				if let Some(de) = de {
+					match de {
+						"hyprland" => attrset! {
+							"services.displayManager.sddm" = attrset! {
+								"wayland.enable" = true;
+								"enable" = true;
+							};
+						},
+						_ =>  attrset! {
+							"services.displayManager.sddm.enable" = true;
+						}
+					}
+				} else {
+					attrset! {
+						"services.displayManager.sddm.enable" = true;
+					}
+				}
 			},
 			"gdm" => attrset! {
 				"services.xserver.displayManager.gdm.enable" = true;

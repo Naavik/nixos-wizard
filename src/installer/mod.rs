@@ -1,9 +1,9 @@
-use std::{fmt::{Debug, Display}, io::Write, process::{Command, Stdio}};
+use std::{collections::VecDeque, fmt::{Debug, Display}, io::Write, process::{Command, Stdio}};
 
 use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Constraint, Direction, Layout, Rect}, style::{Color, Modifier, Style}, text::Line, widgets::{Block, Borders, Paragraph, Wrap}, prelude::Alignment, Frame};
 use serde_json::Value;
 
-use crate::{drives::{part_table, Disk, DiskItem}, installer::{systempkgs::NIXPKGS, users::User}, styled_block, widget::{Button, CheckBox, ConfigWidget, HelpModal, InfoBox, LineEditor, ProgressBar, ShellBox, StrList, WidgetBox, WidgetBoxBuilder}};
+use crate::{command, drives::{part_table, Disk, DiskItem}, installer::{systempkgs::NIXPKGS, users::User}, styled_block, widget::{Button, CheckBox, ConfigWidget, HelpModal, InfoBox, InstallSteps, LineEditor, ProgressBar, ShellBox, ShellCommand, StrList, WidgetBox, WidgetBoxBuilder}};
 
 const HIGHLIGHT: Option<(Color,Modifier)> = Some((Color::Yellow, Modifier::BOLD));
 
@@ -15,7 +15,7 @@ use users::UserAccounts;
 use drivepages::Drives;
 use systempkgs::{fetch_nixpkgs,SystemPackages};
 
-#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Installer {
 	pub flake_path: Option<String>,
 	pub language: Option<String>,
@@ -65,7 +65,7 @@ impl Installer {
 		self.drive_config_display = Some(drive.layout().to_vec())
 	}
 
-	pub fn to_json(&self) -> anyhow::Result<serde_json::Value> {
+	pub fn to_json(&mut self) -> anyhow::Result<serde_json::Value> {
 		// Create the installer configuration JSON
 		let mut sys_config = serde_json::json!({
 			"hostname": self.hostname,
@@ -88,7 +88,7 @@ impl Installer {
 		});
 
 		// drive configuration if present
-		let disko_cfg = self.drive_config.as_ref().map(|d| d.as_disko_cfg());
+		let disko_cfg = self.drive_config.as_mut().map(|d| d.as_disko_cfg());
 
 		// flake configuration if using flakes
 		let flake_path = self.flake_path.clone();
@@ -2668,12 +2668,12 @@ enum ConfigView {
 }
 
 impl ConfigPreview {
-	pub fn new(installer: &Installer) -> anyhow::Result<Self> {
+	pub fn new(installer: &mut Installer) -> anyhow::Result<Self> {
 		// Generate the configuration like the main app does
 		let config_json = installer.to_json()?;
 		let output_dir = std::path::PathBuf::from("./nixos-config");
 		let use_flake = installer.enable_flakes;
-		let serializer = crate::nix::NixWriter::new(config_json, output_dir, use_flake);
+		let serializer = crate::nixgen::NixWriter::new(config_json, output_dir, use_flake);
 
 		let configs = serializer.write_configs()?;
 
@@ -2920,46 +2920,82 @@ impl Page for ConfigPreview {
 }
 
 pub struct InstallProgress<'a> {
-	shellwindow: ShellBox<'a>,
+	installer: Installer,
+	steps: InstallSteps<'a>,
 	progress_bar: ProgressBar,
 	help_modal: HelpModal<'static>,
 }
 
 impl<'a> InstallProgress<'a> {
-	pub fn new() -> anyhow::Result<Self> {
-		let commands = vec![
-			{ let mut c = Command::new("echo"); c.arg("foo"); c },
-			{ let mut c = Command::new("sleep"); c.arg("1"); c },
-			{  Command::new("false") },
-			{ let mut c = Command::new("echo"); c.arg("bar"); c },
-			{ let mut c = Command::new("sleep"); c.arg("1"); c },
-			{ let mut c = Command::new("echo"); c.arg("baz"); c },
-			{ let mut c = Command::new("sleep"); c.arg("1"); c },
-		];
-		let shellwindow = ShellBox::new("Installation", commands);
+	pub fn new(installer: Installer) -> anyhow::Result<Self> {
+		let install_steps = Self::install_commands(&installer)?;
+		let steps = InstallSteps::new("Installing NixOS", install_steps);
 		let progress_bar = ProgressBar::new("Progress", 0);
 
 		let help_content = styled_block(vec![
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Scroll through command output")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Page Up/Down"), (None, " - Scroll output page by page")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Home/End"), (None, " - Jump to beginning/end of output")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate through installation steps")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Exit installation (if completed)")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "This page shows the progress of the NixOS installation process.")],
-			vec![(None, "If any commands fail during this process, the installation will stop.")],
+			vec![(None, "Installation steps are executed sequentially and their status is shown above.")],
 		]);
 		let help_modal = HelpModal::new("Installation Progress", help_content);
 
-		Ok(Self { shellwindow, progress_bar, help_modal })
+		Ok(Self { installer, steps, progress_bar, help_modal })
 	}
+
+	pub fn is_complete(&self) -> bool {
+		self.steps.is_complete()
+	}
+
+	pub fn has_error(&self) -> bool {
+		self.steps.has_error()
+	}
+	fn install_commands(_installer: &Installer) -> anyhow::Result<Vec<(Line<'static>, VecDeque<Command>)>> {
+		Ok(vec![
+			(Line::from("Beginning NixOS Installation..."),
+			 vec![
+				 command!("echo", "Beginning NixOS Installation..."),
+				 command!("sleep", "1")
+			 ].into()),
+			(Line::from("Preparing system..."),
+			 vec![
+				command!("echo", "Checking system requirements..."),
+				command!("sleep", "1"),
+				command!("echo", "Verifying disk space..."),
+				command!("sleep", "1")
+			 ].into()),
+			(Line::from("Configuring disk layout..."),
+			 vec![
+				command!("echo", "Partitioning disks..."),
+				command!("sh", "-c", "nix --extra-experimental-features 'nix-command flakes' run github:nix-community/disko/latest -- --yes-wipe-all-disks --mode destroy,format,mount /tmp/disko.nix 2>&1 > /home/pagedmov/projects/nixos-installer/tui-debug.log"),
+			 ].into()),
+			(Line::from("Building NixOS configuration..."),
+			 vec![
+				command!("sh", "-c", "nixos-generate-config --root /mnt"),
+				command!("cp", "/tmp/configuration.nix", "/mnt/etc/nixos/configuration.nix"),
+				command!("echo", "Build completed")
+			 ].into()),
+			(Line::from("Installing NixOS..."),
+			 vec![
+				command!("sh", "-c", "nixos-install --root /mnt"),
+			 ].into()),
+			(Line::from("Finalizing installation..."),
+			 vec![
+				command!("sleep", "1"),
+				command!("echo", "Installation complete!")
+			 ].into()),
+		])
+	}
+
 }
 
 impl<'a> Page for InstallProgress<'a> {
 	fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-		let _ = self.shellwindow.tick();
-		let progress = self.shellwindow.progress();
-		self.progress_bar.set_progress(progress);
+		// Tick the steps to update animation and process commands
+		let _ = self.steps.tick();
+
 		let chunks = Layout::default()
 			.direction(Direction::Vertical)
 			.margin(1)
@@ -2971,7 +3007,13 @@ impl<'a> Page for InstallProgress<'a> {
 				.as_ref(),
 			)
 			.split(area);
-		self.shellwindow.render(f, chunks[0]);
+
+		// Render InstallSteps widget in the main area
+		self.steps.render(f, chunks[0]);
+
+		// Update progress bar with completion percentage
+		let progress = (self.steps.progress() * 100.0) as u32;
+		self.progress_bar.set_progress(progress);
 		self.progress_bar.render(f, chunks[1]);
 
 		// Help modal
@@ -3007,7 +3049,7 @@ impl<'a> Page for InstallProgress<'a> {
 			}
 			KeyCode::Esc => Signal::Pop,
 			_ => {
-				self.shellwindow.handle_input(event)
+				Signal::Wait
 			}
 		}
 	}

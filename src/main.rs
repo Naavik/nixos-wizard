@@ -3,17 +3,18 @@
 use std::{env, fs::OpenOptions, io, path::PathBuf};
 
 use log::debug;
-use ratatui::{crossterm::{execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}}, layout::{Alignment, Constraint, Direction, Layout}, prelude::CrosstermBackend, style::{Color, Modifier, Style}, text::Line, widgets::Paragraph, Terminal};
-use ratatui::crossterm::event::{self, Event, KeyCode};
+use ratatui::{crossterm::{execute, terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}}, layout::{Alignment, Constraint, Direction, Layout}, prelude::CrosstermBackend, style::{Color, Modifier, Style}, text::Line, widgets::Paragraph, Terminal};
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use serde_json::Value;
 use std::time::{Duration, Instant};
+use nix::unistd;
 
 use crate::installer::{systempkgs::init_nixpkgs, InstallProgress, Installer, Menu, Page, Signal};
 
 pub mod installer;
 pub mod widget;
 pub mod drives;
-pub mod nix;
+pub mod nixgen;
 
 pub fn styled_block<'a>(lines: Vec<Vec<(Option<(Color,Modifier)>, impl ToString)>>) -> Vec<Line<'a>> {
 	lines.into_iter().map(|line| {
@@ -26,6 +27,21 @@ pub fn styled_block<'a>(lines: Vec<Vec<(Option<(Color,Modifier)>, impl ToString)
 		}).collect::<Vec<_>>();
 		Line::from(spans)
 	}).collect()
+}
+
+#[macro_export]
+macro_rules! command {
+    ($cmd:expr, $($arg:expr),* $(,)?) => {{
+			use std::process::Command;
+			let mut c = Command::new($cmd);
+				c.args(&[$($arg.to_string()),*]);
+				c
+		}};
+    ($cmd:expr) => {{
+			use std::process::Command;
+			let c = Command::new($cmd);
+				c
+		}};
 }
 
 #[macro_export]
@@ -73,6 +89,12 @@ struct RawModeGuard;
 impl RawModeGuard {
 	fn new(stdout: &mut io::Stdout) -> anyhow::Result<Self> {
 		enable_raw_mode()?;
+		if let Ok("linux") = env::var("TERM").as_deref() {
+			// we are in a dumb terminal
+			// so we have to explicitly clear the terminal before we start rendering stuff
+			// because in this context, entering an alternate screen doesn't do that for us
+			execute!(stdout, Clear(ClearType::All))?;
+		}
 		execute!(stdout, EnterAlternateScreen)?;
 		Ok(Self)
 	}
@@ -86,6 +108,34 @@ impl Drop for RawModeGuard {
 }
 
 fn main() -> anyhow::Result<()> {
+	let uid = nix::unistd::getuid();
+	log::debug!("UID: {}", uid);
+	if uid.as_raw() != 0 {
+		eprintln!("nixos-wizard: This installer must be run as root.");
+		std::process::exit(1);
+	}
+	// Set up panic handler to clean up terminal state
+	std::panic::set_hook(Box::new(|panic_info| {
+		use ratatui::crossterm::{execute, terminal::{disable_raw_mode, LeaveAlternateScreen}};
+		use std::io::{self, Write};
+
+		// Try to clean up terminal state
+		let _ = disable_raw_mode();
+		let _ = execute!(io::stdout(), LeaveAlternateScreen);
+
+		// Print panic info to stderr
+		eprintln!("==================================================");
+		eprintln!("NIXOS INSTALLER PANIC - Terminal state restored!");
+		eprintln!("==================================================");
+		eprintln!("Panic occurred: {}", panic_info);
+		eprintln!("==================================================");
+
+		// Also try to write to log file
+		if let Ok(mut file) = OpenOptions::new().append(true).create(true).open("tui-debug.log") {
+			let _ = writeln!(file, "PANIC: {}", panic_info);
+		}
+	}));
+
 	unsafe {
 		env::set_var("RUST_LOG", "debug");
 		env::set_var("RUST_LOG_STYLE", "never");
@@ -107,8 +157,11 @@ fn main() -> anyhow::Result<()> {
 		run_app(&mut terminal)
 	};
 
+	debug!("Exiting TUI");
+
 
 	if let Err(err) = res {
+		log::error!("{err}");
 		eprintln!("Error: {err:?}");
 	}
 
@@ -121,10 +174,8 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 	let mut page_stack: Vec<Box<dyn Page>> = vec![];
 	page_stack.push(Box::new(Menu::new()));
 
-	let tick_rate = Duration::from_millis(250);
+	let tick_rate = Duration::from_millis(100);
 	let mut last_tick = Instant::now();
-
-	page_stack.push(Box::new(InstallProgress::new()?));
 
 	loop {
 		terminal.draw(|f| {
@@ -170,6 +221,10 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 
 		if event::poll(timeout)? {
 			if let Event::Key(key) = event::read()? {
+				if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
+				    panic!("Test panic - this should show in terminal after cleanup!");
+				}
+
 				if let Some(page) = page_stack.last_mut() {
 					match page.handle_input(&mut installer, key) {
 						Signal::Wait => {
@@ -208,13 +263,16 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 							// Create NixSerializer and generate Nix configs
 							let output_dir = std::path::PathBuf::from("./nixos-config");
 							let use_flake = installer.enable_flakes;
-							let serializer = crate::nix::NixWriter::new(config_json, output_dir, use_flake);
+							let serializer = crate::nixgen::NixWriter::new(config_json, output_dir, use_flake);
 
 							match serializer.write_configs() {
 								Ok(cfg) => {
 									debug!("system config: {}", cfg.system);
 									debug!("disko config: {}", cfg.disko);
 									debug!("flake_path: {:?}", cfg.flake_path);
+									std::fs::write("/tmp/configuration.nix", cfg.system)?;
+									std::fs::write("/tmp/disko.nix", cfg.disko)?;
+									page_stack.push(Box::new(InstallProgress::new(installer.clone())?));
 								}
 								Err(e) => {
 									debug!("Failed to write configuration files: {e}");
