@@ -1,13 +1,9 @@
-#![warn(clippy::unwrap_used)]
-#![warn(clippy::expect_used)]
-use std::{env, fs::OpenOptions, io, path::PathBuf};
+use std::{env, fs::OpenOptions, io};
 
 use log::debug;
 use ratatui::{crossterm::{execute, terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}}, layout::{Alignment, Constraint, Direction, Layout}, prelude::CrosstermBackend, style::{Color, Modifier, Style}, text::Line, widgets::Paragraph, Terminal};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyModifiers};
-use serde_json::Value;
 use std::time::{Duration, Instant};
-use nix::unistd;
 
 use crate::installer::{systempkgs::init_nixpkgs, InstallProgress, Installer, Menu, Page, Signal};
 
@@ -16,7 +12,8 @@ pub mod widget;
 pub mod drives;
 pub mod nixgen;
 
-pub fn styled_block<'a>(lines: Vec<Vec<(Option<(Color,Modifier)>, impl ToString)>>) -> Vec<Line<'a>> {
+type LineStyle = Option<(Color, Modifier)>;
+pub fn styled_block<'a>(lines: Vec<Vec<(LineStyle, impl ToString)>>) -> Vec<Line<'a>> {
 	lines.into_iter().map(|line| {
 		let spans = line.into_iter().map(|(style_opt, text)| {
 			let mut span = ratatui::text::Span::raw(text.to_string());
@@ -109,7 +106,7 @@ impl Drop for RawModeGuard {
 
 fn main() -> anyhow::Result<()> {
 	let uid = nix::unistd::getuid();
-	log::debug!("UID: {}", uid);
+	log::debug!("UID: {uid}");
 	if uid.as_raw() != 0 {
 		eprintln!("nixos-wizard: This installer must be run as root.");
 		std::process::exit(1);
@@ -127,12 +124,12 @@ fn main() -> anyhow::Result<()> {
 		eprintln!("==================================================");
 		eprintln!("NIXOS INSTALLER PANIC - Terminal state restored!");
 		eprintln!("==================================================");
-		eprintln!("Panic occurred: {}", panic_info);
+		eprintln!("Panic occurred: {panic_info}");
 		eprintln!("==================================================");
 
 		// Also try to write to log file
 		if let Ok(mut file) = OpenOptions::new().append(true).create(true).open("tui-debug.log") {
-			let _ = writeln!(file, "PANIC: {}", panic_info);
+			let _ = writeln!(file, "PANIC: {panic_info}");
 		}
 	}));
 

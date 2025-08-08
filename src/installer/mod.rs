@@ -3,7 +3,7 @@ use std::{collections::VecDeque, fmt::{Debug, Display}, io::Write, process::{Com
 use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Constraint, Direction, Layout, Rect}, style::{Color, Modifier, Style}, text::Line, widgets::{Block, Borders, Paragraph, Wrap}, prelude::Alignment, Frame};
 use serde_json::Value;
 
-use crate::{command, drives::{part_table, Disk, DiskItem}, installer::{systempkgs::NIXPKGS, users::User}, styled_block, widget::{Button, CheckBox, ConfigWidget, HelpModal, InfoBox, InstallSteps, LineEditor, ProgressBar, ShellBox, ShellCommand, StrList, WidgetBox, WidgetBoxBuilder}};
+use crate::{command, drives::{part_table, Disk, DiskItem}, installer::{systempkgs::NIXPKGS, users::User}, styled_block, widget::{Button, CheckBox, ConfigWidget, HelpModal, InfoBox, InstallSteps, LineEditor, ProgressBar, StrList, WidgetBox, WidgetBoxBuilder}};
 
 const HIGHLIGHT: Option<(Color,Modifier)> = Some((Color::Yellow, Modifier::BOLD));
 
@@ -67,7 +67,7 @@ impl Installer {
 
 	pub fn to_json(&mut self) -> anyhow::Result<serde_json::Value> {
 		// Create the installer configuration JSON
-		let mut sys_config = serde_json::json!({
+		let sys_config = serde_json::json!({
 			"hostname": self.hostname,
 			"language": self.language,
 			"keyboard_layout": self.keyboard_layout,
@@ -136,7 +136,7 @@ impl Debug for Signal {
 pub trait Page {
 	fn render(&mut self, installer: &mut Installer, f: &mut Frame, area: Rect);
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal;
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		("Help".to_string(), vec![Line::from("No help available for this page.")])
 	}
 }
@@ -369,7 +369,7 @@ impl Menu {
 		}
 
 	}
-	pub fn remaining_requirements(&self, installer: &mut Installer) -> InfoBox {
+	pub fn remaining_requirements(&self, installer: &mut Installer) -> InfoBox<'_> {
 		let mut lines = vec![];
 		if installer.root_passwd_hash.is_none() {
 			lines.push(vec![(Some((Color::Red, Modifier::BOLD)), " - Root Password")]);
@@ -443,7 +443,7 @@ impl Page for Menu {
 		self.help_modal.render(f, area);
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate menu options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select and configure option")],
@@ -755,7 +755,7 @@ impl Page for SourceFlake {
 		self.help_modal.render(f, area);
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Save configuration and return")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Cancel and return to menu")],
@@ -863,7 +863,7 @@ impl Page for Language {
 		self.help_modal.render(f, area);
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate language options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select language and return")],
@@ -987,7 +987,7 @@ impl Page for KeyboardLayout {
 		self.help_modal.render(f, area);
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate keyboard layout options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select keyboard layout and return")],
@@ -1109,7 +1109,7 @@ impl Page for Locale {
 		self.help_modal.render(f, area);
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate locale options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select locale and return")],
@@ -1233,7 +1233,7 @@ impl Page for EnableFlakes {
 		self.help_modal.render(f, area);
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Toggle option or select Back")],
@@ -1358,7 +1358,7 @@ impl Page for Bootloader {
 		self.help_modal.render(f, area);
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate bootloader options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select bootloader and return")],
@@ -1482,7 +1482,7 @@ impl Page for Swap {
 		self.buttons.render(f, hor_chunks[1]);
 		self.help_modal.render(f, area);
 	}
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Toggle option or select Back")],
@@ -1626,7 +1626,7 @@ impl Page for Hostname {
 		self.help_modal.render(f, area);
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Save hostname and return")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Cancel and return to menu")],
@@ -1792,7 +1792,7 @@ impl Page for RootPassword {
 		self.help_modal.render(f, area);
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Move to next field or save when complete")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Tab"), (None, " - Switch between password fields")],
@@ -1950,7 +1950,7 @@ impl Page for Profile {
 		self.help_modal.render(f, area);
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate profile options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select profile and return")],
@@ -2057,7 +2057,7 @@ impl Page for Greeter {
 		self.help_modal.render(f, area);
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate greeter options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select greeter and return")],
@@ -2170,7 +2170,7 @@ impl Page for DesktopEnvironment {
 		self.help_modal.render(f, area);
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate desktop environment options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select desktop environment and return")],
@@ -2279,7 +2279,7 @@ impl Page for Kernels {
 		self.help_modal.render(f, area);
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate kernel options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select kernel and return")],
@@ -2388,7 +2388,7 @@ impl Page for Audio {
 		self.help_modal.render(f, area);
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate audio backend options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select audio backend and return")],
@@ -2496,7 +2496,7 @@ impl Page for Network {
 		self.help_modal.render(f, area);
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate network backend options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select network backend and return")],
@@ -2615,7 +2615,7 @@ impl Page for Timezone {
 		self.help_modal.render(f, area);
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate timezone options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select timezone and return")],
@@ -2654,7 +2654,7 @@ impl Page for Timezone {
 pub struct ConfigPreview {
 	system_config: String,
 	disko_config: String,
-	flake_path: Option<String>,
+	_flake_path: Option<String>,
 	scroll_position: usize,
 	button_row: WidgetBox,
 	current_view: ConfigView,
@@ -2701,7 +2701,7 @@ impl ConfigPreview {
 		Ok(Self {
 			system_config: configs.system,
 			disko_config: configs.disko,
-			flake_path: configs.flake_path,
+			_flake_path: configs.flake_path,
 			scroll_position: 0,
 			button_row,
 			current_view: ConfigView::System,
@@ -2767,7 +2767,7 @@ impl Page for ConfigPreview {
 		let start_line = self.scroll_position;
 		let end_line = std::cmp::min(start_line + visible_lines, lines.len());
 
-		let display_lines: Vec<Line> = lines[start_line..end_line]
+		let display_lines: Vec<Line<'_>> = lines[start_line..end_line]
 			.iter()
 			.map(|line| Line::from(*line))
 			.collect();
@@ -2792,7 +2792,7 @@ impl Page for ConfigPreview {
 		self.help_modal.render(f, area);
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "1/2"), (None, " - Switch between System/Disko config")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Scroll config content")],
@@ -2920,7 +2920,7 @@ impl Page for ConfigPreview {
 }
 
 pub struct InstallProgress<'a> {
-	installer: Installer,
+	_installer: Installer,
 	steps: InstallSteps<'a>,
 	progress_bar: ProgressBar,
 	help_modal: HelpModal<'static>,
@@ -2942,7 +2942,7 @@ impl<'a> InstallProgress<'a> {
 		]);
 		let help_modal = HelpModal::new("Installation Progress", help_content);
 
-		Ok(Self { installer, steps, progress_bar, help_modal })
+		Ok(Self { _installer: installer, steps, progress_bar, help_modal })
 	}
 
 	pub fn is_complete(&self) -> bool {
@@ -3020,7 +3020,7 @@ impl<'a> Page for InstallProgress<'a> {
 		self.help_modal.render(f, area);
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Scroll through command output")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Page Up/Down"), (None, " - Scroll output page by page")],

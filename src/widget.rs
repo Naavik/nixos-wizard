@@ -1,12 +1,10 @@
-use std::{collections::VecDeque, io::{BufRead, BufReader, Read}, os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd}, process::{Child, ChildStderr, ChildStdout, Command, Stdio}};
+use std::{collections::VecDeque, io::{BufRead, BufReader, Read}, os::fd::{FromRawFd, IntoRawFd, OwnedFd}, process::{Child, ChildStderr, ChildStdout, Command, Stdio}};
 use portable_pty::{PtySize, CommandBuilder};
-use throbber_widgets_tui::{Throbber, ThrobberState, BOX_DRAWING, BRAILLE_EIGHT};
-use throbber_widgets_tui::symbols::throbber::BRAILLE_SIX;
+use throbber_widgets_tui::{ThrobberState, BRAILLE_EIGHT};
 
 use ansi_to_tui::IntoText;
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
-use itertools::Itertools;
-use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Alignment, Constraint, Layout, Rect}, style::{Color, Modifier, Style}, text::{Line, Span}, widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Table, TableState, Widget}, Frame};
+use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Alignment, Constraint, Layout, Rect}, style::{Color, Modifier, Style}, text::{Line, Span}, widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Table, TableState}, Frame};
 use serde_json::Value;
 
 use crate::installer::Signal;
@@ -77,6 +75,12 @@ impl WidgetBoxBuilder {
 		let render_borders = self.render_borders.unwrap_or(false);
 		WidgetBox::new(title, layout, self.widgets, self.input_callback, render_borders)
 	}
+}
+
+impl Default for WidgetBoxBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 pub type InputCallbackWidget = Box<dyn FnMut(&mut dyn ConfigWidget, KeyEvent) -> Signal>;
@@ -177,17 +181,7 @@ impl WidgetBox {
 
 impl ConfigWidget for WidgetBox {
 	fn handle_input(&mut self, key: KeyEvent) -> Signal {
-		let mut ret = Signal::Wait;
-		if let Some(callback) = self.input_callback.as_mut() {
-			if let Some(idx) = self.focused_child {
-				ret = callback(self.widgets[idx].as_mut(), key);
-			}
-		}
-		match ret {
-			_ => {
-				self.widgets[self.focused_child.unwrap_or(0)].handle_input(key)
-			}
-		}
+		self.widgets[self.focused_child.unwrap_or(0)].handle_input(key)
 	}
 
 	fn focus(&mut self) {
@@ -351,7 +345,7 @@ impl Button {
 }
 
 impl ConfigWidget for Button {
-	fn handle_input(&mut self, key: KeyEvent) -> Signal {
+	fn handle_input(&mut self, _key: KeyEvent) -> Signal {
 		Signal::Wait
 	}
 
@@ -422,7 +416,7 @@ impl LineEditor {
 		self.is_secret = is_secret;
 		self
 	}
-	fn get_placeholder_line(&self, focused: bool) -> Line {
+	fn get_placeholder_line(&self, focused: bool) -> Line<'_> {
 		if let Some(placeholder) = &self.placeholder {
 			if placeholder.is_empty() {
 				if focused {
@@ -466,7 +460,7 @@ impl LineEditor {
 			Line::from(span)
 		}
 	}
-	fn render_line(&self) -> Line {
+	fn render_line(&self) -> Line<'_> {
 		if !self.focused {
 			if self.is_secret {
 				let masked = "*".repeat(self.value.chars().count());
@@ -525,7 +519,7 @@ impl LineEditor {
 			])
 		}
 	}
-	fn as_widget(&self) -> Paragraph {
+	fn as_widget(&self) -> Paragraph<'_> {
 		Paragraph::new(self.render_line())
 			.block(Block::default().title(self.title.clone()).borders(Borders::ALL))
 	}
@@ -878,7 +872,7 @@ impl ConfigWidget for OptimizedStrList {
 		f.render_stateful_widget(list, area, &mut state);
 	}
 
-	fn handle_input(&mut self, key: ratatui::crossterm::event::KeyEvent) -> super::Signal {
+	fn handle_input(&mut self, _key: ratatui::crossterm::event::KeyEvent) -> super::Signal {
 		super::Signal::Wait
 	}
 
@@ -1460,7 +1454,7 @@ impl<'a> ShellBox<'a> {
 				self.running = false;
 				if !status.success() {
 					self.content.push(Line::from(Span::styled(
-								format!("Installation failed"),
+								"Installation failed".to_string(),
 								Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
 					)));
 					self.error = true;
@@ -1638,7 +1632,7 @@ impl TableWidget {
 
 impl ConfigWidget for TableWidget {
 	fn handle_input(&mut self, key: KeyEvent) -> Signal {
-		if let Some(idx) = self.selected_row.as_mut() {
+		if let Some(_idx) = self.selected_row.as_mut() {
 			match key.code {
 				KeyCode::Up | KeyCode::Char('k') => {
 					self.next_row();

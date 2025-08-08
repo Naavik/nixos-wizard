@@ -1,9 +1,9 @@
-use std::{fmt::Display, process::Command, str::FromStr, sync::atomic::AtomicU64};
+use std::{process::Command, sync::atomic::AtomicU64};
 
 use ratatui::layout::Constraint;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
-use crate::{attrset, merge_attrs, widget::TableWidget};
+use crate::widget::TableWidget;
 
 static NEXT_PART_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -20,7 +20,7 @@ pub fn bytes_disko_cfg(bytes: u64, total_used_sectors: u64, sector_size: u64, to
 	let requested_sectors = bytes.div_ceil(sector_size);
 	let is_rest_of_space = (requested_sectors + total_used_sectors) >= (total_size.saturating_sub(2048));
 	if is_rest_of_space {
-		log::debug!("bytes_disko_cfg: using 100% for bytes {}, total_used_sectors {}, sector_size {}, total_size {}", bytes, total_used_sectors, sector_size, total_size);
+		log::debug!("bytes_disko_cfg: using 100% for bytes {bytes}, total_used_sectors {total_used_sectors}, sector_size {sector_size}, total_size {total_size}");
 		return "100%".into()
 	}
 	const K: f64 = 1000.0;
@@ -98,7 +98,7 @@ pub fn parse_sectors(s: &str, sector_size: u64, total_sectors: u64) -> Option<u6
 
 pub fn mb_to_sectors(mb: u64, sector_size: u64) -> u64 {
 	let bytes = mb * 1024 * 1024;
-	(bytes + sector_size - 1) / sector_size // round up to nearest sector
+	bytes.div_ceil(sector_size) // round up to nearest sector
 }
 
 /// We are going to be using the `lsblk` command to get disk information.
@@ -378,7 +378,7 @@ impl Disk {
 	pub fn new_partition(&mut self, part: Partition) -> anyhow::Result<()> {
 		// Ensure the new partition does not overlap existing partitions
 		self.clear_free_space();
-		log::debug!("Adding new partition: {:#?}", part);
+		log::debug!("Adding new partition: {part:#?}");
 		log::debug!("Current layout: {:#?}", self.layout);
 		let new_start = part.start();
 		let new_end = part.end();
@@ -634,6 +634,7 @@ pub struct Partition {
 	flags: Vec<String>
 }
 
+#[allow(clippy::too_many_arguments)]
 impl Partition {
 	pub fn new(
 		start: u64,
@@ -855,6 +856,12 @@ impl PartitionBuilder {
 			flags: self.flags
 		})
 	}
+}
+
+impl Default for PartitionBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]

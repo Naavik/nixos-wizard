@@ -1,7 +1,7 @@
 use std::{path::PathBuf, process::{Command, Stdio}};
 use serde_json::Value;
 
-use crate::{attrset, list, merge_attrs, installer::users::User};
+use crate::{attrset, merge_attrs, installer::users::User};
 
 pub fn nixstr(val: impl ToString) -> String {
 	let val = val.to_string();
@@ -67,8 +67,8 @@ pub struct Configs {
 
 pub struct NixWriter {
 	config: Value,
-	output_dir: PathBuf,
-	write_flake: bool
+	_output_dir: PathBuf,
+	_write_flake: bool
 }
 
 impl NixWriter {
@@ -79,8 +79,8 @@ impl NixWriter {
 	) -> Self {
 		Self {
 			config,
-			output_dir,
-			write_flake
+			_output_dir: output_dir,
+			_write_flake: write_flake
 		}
 	}
 	pub fn write_configs(&self) -> anyhow::Result<Configs> {
@@ -220,7 +220,7 @@ impl NixWriter {
 		let size = partition["size"].as_str()
 			.ok_or_else(|| anyhow::anyhow!("Missing required 'size' field in partition"))?;
 		let part_type = partition.get("type").and_then(|v| v.as_str());
-		log::debug!("Parsing partition: format={format}, mountpoint={mountpoint}, size={size}, type={:?}", part_type);
+		log::debug!("Parsing partition: format={format}, mountpoint={mountpoint}, size={size}, type={part_type:?}");
 
 		if let Some(part_type) = part_type {
 			Ok(attrset! {
@@ -269,6 +269,7 @@ impl NixWriter {
 			"services.xserver.xkb.layout" = nixstr(value);
 		}
 	}
+	#[allow(clippy::ptr_arg)]
 	fn parse_kernels(kernels: &Vec<Value>) -> String {
 		if kernels.is_empty() {
 			return String::from("{}");
@@ -295,7 +296,7 @@ impl NixWriter {
 			"networking.hostName" = nixstr(value);
 		}
 	}
-	fn parse_greeter(value: &str, de: Option<&str>) -> String {
+	fn _parse_greeter(value: &str, de: Option<&str>) -> String {
 		match value.to_lowercase().as_str() {
 			"sddm" => {
 				if let Some(de) = de {
@@ -410,11 +411,12 @@ impl NixWriter {
 			"users.users" = format!("{{ {} }}", user_configs.join(" "));
 		};
 
-		log::debug!("Parsed users config: {}", users);
+		log::debug!("Parsed users config: {users}");
 
 		Ok(users)
 	}
 
+	#[allow(clippy::ptr_arg)]
 	fn parse_system_packages(packages: &Vec<Value>) -> String {
 		if packages.is_empty() {
 			return String::from("{}");

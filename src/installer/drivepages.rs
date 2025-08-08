@@ -122,7 +122,7 @@ impl<'a> Page for Drives<'a> {
 		}
 	}
 
-	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line>) {
+	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select drive configuration method")],
@@ -173,14 +173,14 @@ impl Page for SelectDrive {
 		match event.code {
 			KeyCode::Char('?') => {
 				self.help_modal.toggle();
-				return Signal::Wait;
+				Signal::Wait
 			}
 			KeyCode::Esc if self.help_modal.visible => {
 				self.help_modal.hide();
-				return Signal::Wait;
+				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
-				return Signal::Wait;
+				Signal::Wait
 			}
 			KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
 			KeyCode::Up | KeyCode::Char('k') => {
@@ -216,7 +216,7 @@ impl Page for SelectDrive {
 		}
 	}
 
-	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line>) {
+	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate drive list")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select drive for installation")],
@@ -557,14 +557,14 @@ impl Page for SelectFilesystem {
 		match event.code {
 			KeyCode::Char('?') => {
 				self.help_modal.toggle();
-				return Signal::Wait;
+				Signal::Wait
 			}
 			KeyCode::Esc if self.help_modal.visible => {
 				self.help_modal.hide();
-				return Signal::Wait;
+				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
-				return Signal::Wait;
+				Signal::Wait
 			}
 			KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
 			KeyCode::Up | KeyCode::Char('k') => {
@@ -618,7 +618,7 @@ impl Page for SelectFilesystem {
 		}
 	}
 
-	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line>) {
+	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate filesystem options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select filesystem type")],
@@ -769,7 +769,7 @@ impl Page for ManualPartition {
 					let Some(item) = layout.iter().rfind(|i| i.start() == start) else {
 						return Signal::Error(anyhow::anyhow!("No partition or free space found at start sector {}", start));
 					};
-					log::debug!("Selected item: {:?}", item);
+					log::debug!("Selected item: {item:?}");
 					match item {
 						DiskItem::Partition(part) => {
 							Signal::Push(Box::new(AlterPartition::new(part.clone())))
@@ -858,7 +858,7 @@ impl Page for ManualPartition {
 		}
 	}
 
-	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line>) {
+	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate partitions and buttons")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Tab"), (None, " - Switch between partition table and buttons")],
@@ -954,14 +954,14 @@ impl Page for SuggestPartition {
 		match event.code {
 			KeyCode::Char('?') => {
 				self.help_modal.toggle();
-				return Signal::Wait;
+				Signal::Wait
 			}
 			KeyCode::Esc if self.help_modal.visible => {
 				self.help_modal.hide();
-				return Signal::Wait;
+				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
-				return Signal::Wait;
+				Signal::Wait
 			}
 			KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
 			KeyCode::Up | KeyCode::Char('k') => {
@@ -997,7 +997,7 @@ impl Page for SuggestPartition {
 		}
 	}
 
-	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line>) {
+	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate yes/no options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Confirm selection")],
@@ -1168,7 +1168,7 @@ impl NewPartition {
 			info_box.render(f, vert_chunks[1]);
 		}
 	}
-	pub fn handle_input_fs_select(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
+	pub fn handle_input_fs_select(&mut self, _installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
 			KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
 			KeyCode::Up | KeyCode::Char('k') => {
@@ -1736,14 +1736,14 @@ impl SetMountPoint {
 			return Err("Mount point cannot end with '/' unless it is root '/'.".to_string());
 		}
 		if taken.contains(&mount_point.to_string()) {
-			return Err(format!("Mount point '{}' is already taken by another partition.", mount_point));
+			return Err(format!("Mount point '{mount_point}' is already taken by another partition."));
 		}
 		Ok(())
 	}
 }
 
 impl Page for SetMountPoint {
-	fn render(&mut self, installer: &mut Installer, f: &mut Frame, area: Rect) {
+	fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
 		let chunks = Layout::default()
 			.direction(Direction::Vertical)
 			.constraints(
@@ -1792,7 +1792,7 @@ impl Page for SetMountPoint {
 				let current_mount = device
 						.partitions()
 						.find(|p| p.id() == self.dev_id)
-						.and_then(|p| p.mount_point().clone());
+						.and_then(|p| p.mount_point());
 
 				let mut taken_mounts: Vec<String> = device
 					.partitions()
@@ -1800,7 +1800,7 @@ impl Page for SetMountPoint {
 					.collect();
 
 				if let Some(current_mount) = current_mount {
-					taken_mounts.retain(|mp| mp != &current_mount);
+					taken_mounts.retain(|mp| mp != current_mount);
 				}
 				if let Err(err) = Self::validate_mount_point(&mount_point, &taken_mounts) {
 					self.editor.error(&err);

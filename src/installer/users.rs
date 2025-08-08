@@ -1,4 +1,4 @@
-use ratatui::{crossterm::{event::KeyCode, style::style}, layout::{Constraint, Direction, Layout}, text::Line};
+use ratatui::{crossterm::event::KeyCode, layout::{Constraint, Direction, Layout}, text::Line};
 
 use crate::{installer::{Installer, Page, Signal, HIGHLIGHT}, styled_block, widget::{Button, ConfigWidget, HelpModal, InfoBox, LineEditor, StrList, TableWidget, WidgetBox}};
 
@@ -108,7 +108,7 @@ impl Page for UserAccounts {
 		self.help_modal.render(f, area);
 	}
 
-	fn handle_input(&mut self, installer: &mut super::Installer, event: ratatui::crossterm::event::KeyEvent) -> Signal {
+	fn handle_input(&mut self, _installer: &mut super::Installer, event: ratatui::crossterm::event::KeyEvent) -> Signal {
 		match event.code {
 			KeyCode::Char('?') => {
 				self.help_modal.toggle();
@@ -196,7 +196,7 @@ impl Page for UserAccounts {
 		}
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate user list")],
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Enter"), (None, " - Add new user or edit selected user")],
@@ -279,8 +279,14 @@ impl AddUser {
 	}
 }
 
+impl Default for AddUser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Page for AddUser {
-	fn render(&mut self, installer: &mut super::Installer, f: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
+	fn render(&mut self, _installer: &mut super::Installer, f: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
 		let hor_chunks = ratatui::layout::Layout::default()
 			.direction(ratatui::layout::Direction::Horizontal)
 			.margin(2)
@@ -429,7 +435,7 @@ impl Page for AddUser {
 		}
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Tab"), (None, " - Move to next field")],
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Shift+Tab"), (None, " - Move to previous field")],
@@ -588,7 +594,7 @@ impl AlterUser {
 		self.pass_input.render(f, hor_chunks1[1]);
 		self.pass_confirm.render(f, hor_chunks2[1]);
 	}
-	pub fn render_edit_groups(&mut self, installer: &mut super::Installer, f: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
+	pub fn render_edit_groups(&mut self, _installer: &mut super::Installer, f: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
 		let hor_chunks = Layout::default()
 			.direction(Direction::Horizontal)
 			.margin(2)
@@ -926,7 +932,7 @@ impl Page for AlterUser {
 		}
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate menu options")],
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Enter"), (None, " - Select option")],

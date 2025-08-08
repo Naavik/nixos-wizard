@@ -17,7 +17,7 @@ pub fn init_nixpkgs() {
 	let pkgs_ref = NIXPKGS.clone();
 	thread::spawn(move || {
 		let pkgs = fetch_nixpkgs().unwrap_or_else(|e| {
-			eprintln!("Failed to fetch nixpkgs: {}", e);
+			eprintln!("Failed to fetch nixpkgs: {e}");
 			vec![]
 		});
 		let mut pkgs_lock = pkgs_ref.write().unwrap();
@@ -65,7 +65,7 @@ pub struct PackageManager {
     available: BTreeMap<String, usize>,
     selected: BTreeMap<String, usize>,
     // Original ordering from nixpkgs for restoration
-    original_order: Vec<String>,
+    _original_order: Vec<String>,
     // Cache for filtered results - maps package name to (original_index, fuzzy_score)
     last_filter: Option<String>,
     cached_filtered: BTreeMap<String, (usize, i64)>, // package_name -> (original_index, fuzzy_score)
@@ -75,28 +75,28 @@ impl PackageManager {
     pub fn new(all_packages: Vec<String>, selected_packages: Vec<String>) -> Self {
         let mut available = BTreeMap::new();
         let mut selected = BTreeMap::new();
-        
+
         // Build the original order and available map
         for (idx, package) in all_packages.iter().enumerate() {
             available.insert(package.clone(), idx);
         }
-        
+
         // Move pre-selected packages to selected map
         for package in selected_packages {
             if let Some(idx) = available.remove(&package) {
                 selected.insert(package, idx);
             }
         }
-        
+
         Self {
             available,
             selected,
-            original_order: all_packages,
+            _original_order: all_packages,
             last_filter: None,
             cached_filtered: BTreeMap::new(),
         }
     }
-    
+
     pub fn move_to_selected(&mut self, package: &str) -> bool {
         if let Some(idx) = self.available.remove(package) {
             self.selected.insert(package.to_string(), idx);
@@ -107,7 +107,7 @@ impl PackageManager {
             false
         }
     }
-    
+
     pub fn move_to_available(&mut self, package: &str) -> bool {
         if let Some(idx) = self.selected.remove(package) {
             self.available.insert(package.to_string(), idx);
@@ -125,15 +125,15 @@ impl PackageManager {
             false
         }
     }
-    
+
     pub fn get_available_packages(&self) -> Vec<String> {
         self.available.keys().cloned().collect()
     }
-    
+
     pub fn get_selected_packages(&self) -> Vec<String> {
         self.selected.keys().cloned().collect()
     }
-    
+
     pub fn get_available_filtered(&mut self, filter: &str) -> Vec<String> {
         // Check if we can reuse cached results
         if let Some(ref last_filter) = self.last_filter {
@@ -141,25 +141,25 @@ impl PackageManager {
                 return self.get_sorted_by_score_from_cache();
             }
         }
-        
+
         // Need to recompute
         use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
         let matcher = SkimMatcherV2::default();
-        
+
         let mut filtered_map = BTreeMap::new();
         for (package, &original_idx) in &self.available {
             if let Some(score) = matcher.fuzzy_match(package, filter) {
                 filtered_map.insert(package.clone(), (original_idx, score));
             }
         }
-        
+
         // Cache the results
         self.last_filter = Some(filter.to_string());
         self.cached_filtered = filtered_map;
-        
+
         self.get_sorted_by_score_from_cache()
     }
-    
+
     /// Get packages from cache sorted by fuzzy match score (best matches first)
     fn get_sorted_by_score_from_cache(&self) -> Vec<String> {
         let mut packages_with_score: Vec<_> = self.cached_filtered.iter()
@@ -168,15 +168,15 @@ impl PackageManager {
         packages_with_score.sort_by_key(|(_, score)| -score); // Negative for descending order
         packages_with_score.into_iter().map(|(package, _)| package).collect()
     }
-    
+
     pub fn contains_available(&self, package: &str) -> bool {
         self.available.contains_key(package)
     }
-    
+
     pub fn contains_selected(&self, package: &str) -> bool {
         self.selected.contains_key(package)
     }
-    
+
     /// Get current available list without recomputing if filter hasn't changed
     pub fn get_current_available(&self) -> Vec<String> {
         if self.last_filter.is_some() {
@@ -199,12 +199,12 @@ pub struct SystemPackages {
 impl SystemPackages {
 	pub fn new(selected_pkgs: Vec<String>, available_pkgs: Vec<String>) -> Self {
 		let package_manager = PackageManager::new(available_pkgs.clone(), selected_pkgs.clone());
-		
+
 		let mut available = OptimizedStrList::new("Available Packages", package_manager.get_available_packages());
 		available.focus();
 		let selected = OptimizedStrList::new("Selected Packages", package_manager.get_selected_packages());
 		let search_bar = LineEditor::new("Search", Some("Enter a package name..."));
-		
+
 		let help_content = styled_block(vec![
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Tab"), (None, " - Switch between lists and search")],
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate package lists")],
@@ -218,7 +218,7 @@ impl SystemPackages {
 			vec![(None, "Selected packages will be installed on your NixOS system.")],
 		]);
 		let help_modal = HelpModal::new("System Packages", help_content);
-		
+
 		Self {
 			package_manager,
 			selected,
@@ -258,13 +258,13 @@ impl SystemPackages {
 		self.search_bar.unfocus();
 		self.available.unfocus();
 	}
-	
+
 	fn update_available_list(&mut self) {
 		// Use the cache-aware method that avoids recomputation
 		let items = self.package_manager.get_current_available();
 		self.available.set_items(items);
 	}
-	
+
 	fn set_filter(&mut self, filter: Option<String>) {
 		self.current_filter = filter.clone();
 		let items = if let Some(filter) = filter {
@@ -277,7 +277,7 @@ impl SystemPackages {
 }
 
 impl Page for SystemPackages {
-	fn render(&mut self, installer: &mut super::Installer, f: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
+	fn render(&mut self, _installer: &mut super::Installer, f: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
 		let hor_chunks = ratatui::layout::Layout::default()
 			.direction(ratatui::layout::Direction::Horizontal)
 			.constraints([
@@ -303,7 +303,7 @@ impl Page for SystemPackages {
 		self.selected.render(f, vert_chunks_left[1]);
 		self.search_bar.render(f, vert_chunks_right[0]);
 		self.available.render(f, vert_chunks_right[1]);
-		
+
 		// Render help modal on top
 		self.help_modal.render(f, area);
 	}
@@ -323,7 +323,7 @@ impl Page for SystemPackages {
 			}
 			_ => {}
 		}
-		
+
 		if event.code == KeyCode::Char('/') && !self.search_bar.is_focused() {
 			self.search_bar.focus();
 			self.available.unfocus();
@@ -347,7 +347,7 @@ impl Page for SystemPackages {
 					// Apply real-time filtering on every keystroke
 					let filter_text = self.search_bar.get_value()
 						.and_then(|v| v.as_str().map(|s| s.to_string()));
-					
+
 					if let Some(filter) = filter_text {
 						if !filter.is_empty() {
 							self.set_filter(Some(filter));
@@ -432,7 +432,7 @@ impl Page for SystemPackages {
 		}
 	}
 
-	fn get_help_content(&self) -> (String, Vec<Line>) {
+	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Tab"), (None, " - Switch between lists and search")],
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate package lists")],
