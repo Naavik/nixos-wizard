@@ -3112,6 +3112,9 @@ impl InstallComplete {
 			vec![(None, "")],
 			vec![(None, "You can now reboot your computer and remove the installation media.")],
 			vec![(None, "")],
+			vec![(None, "The installation remains mounted on /mnt if you wish to perform any manual configuration on the new system.")],
+			vec![(None, "Such manual configuration can be performed using the 'nixos-enter' command.")],
+			vec![(None, "")],
 			vec![(None, "Press any key to exit the installer.")],
 		]);
 		let text_box = InfoBox::new("Installation Complete", content);

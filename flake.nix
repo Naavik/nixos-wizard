@@ -15,7 +15,7 @@
     diskoPkg = disko.packages.${system}.disko;
     nixosWizard = pkgs.rustPlatform.buildRustPackage {
       pname = "nixos-wizard";
-      version = "0.1.0";
+      version = "0.1.1";
 
       src = self;
 

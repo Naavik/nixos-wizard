@@ -53,12 +53,6 @@ pub fn highlight_nix(nix: &str) -> anyhow::Result<String> {
 		Err(anyhow::anyhow!("bat failed: {}", err))
 	}
 }
-
-pub struct NixSerializer {
-	pub config: Value,
-	pub output_dir: PathBuf,
-	pub use_flake: bool
-}
 /*
 {
   "config": {
@@ -468,26 +462,4 @@ impl NixWriter {
 			"swapDevices" = "[ { device = \"/swapfile\"; size = 4096; } ]";
 		}
 	}
-}
-
-impl NixSerializer {
-	pub fn new(config: Value, output_dir: PathBuf, use_flake: bool) -> Self {
-		Self { config, output_dir, use_flake }
-	}
-
-	pub fn mk_disko_config(&self) -> anyhow::Result<Option<String>> {
-		let Value::Object(ref cfg) = self.config else {
-			return Err(anyhow::anyhow!("Config must be a JSON object"));
-		};
-
-		if let Some(disko_json) = cfg.get("disko") {
-			let disko_nix = serde_json::to_string_pretty(disko_json)?;
-			// Convert JSON to Nix format - this would need a proper JSON->Nix converter
-			// For now, return the raw JSON as a comment
-			Ok(Some(format!("# Disko configuration (JSON):\n# {disko_nix}")))
-		} else {
-			Ok(None)
-		}
-	}
-
 }
