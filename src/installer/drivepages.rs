@@ -595,7 +595,7 @@ impl Page for SelectFilesystem {
 
 				if installer.use_auto_drive_config {
 					if let Some(config) = installer.drive_config.as_mut() {
-						config.use_default_layout();
+						config.use_default_layout(Some(fs));
 					}
 					installer.make_drive_config_display();
 					return Signal::PopCount(3);
@@ -980,7 +980,7 @@ impl Page for SuggestPartition {
 					0 => {
 						// Yes
 						if let Some(ref mut config) = installer.drive_config {
-							config.use_default_layout();
+							config.use_default_layout(Some("ext4".into()));
 						} else {
 							return Signal::Error(anyhow::anyhow!("No drive config available for suggested partition layout"));
 						}

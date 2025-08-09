@@ -17,19 +17,28 @@
       pname = "nixos-wizard";
       version = "0.1.0";
 
-      src = ./.;
+      src = self;
 
-      cargoLock = {
-        lockFile = ./Cargo.lock;
-      };
+      cargoLock.lockFile = ./Cargo.lock;
 
-      buildInputs = [];
+      buildInputs = [ pkgs.makeWrapper ];
+
+      postInstall = ''
+        wrapProgram $out/bin/nixos-wizard \
+        --prefix PATH : ${pkgs.lib.makeBinPath [
+          diskoPkg
+          pkgs.bat
+          pkgs.util-linux
+          pkgs.parted
+          pkgs.e2fsprogs
+        ]}
+      '';
     };
   in
   {
     nixosConfigurations = {
       installerIso = nixpkgs.lib.nixosSystem {
-        specialArgs = { inherit inputs diskoPkg nixosWizard; };
+        specialArgs = { inherit inputs nixosWizard; };
         modules = [
           ./isoimage/config.nix
         ];

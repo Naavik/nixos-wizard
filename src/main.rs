@@ -3,6 +3,7 @@ use std::{env, fs::OpenOptions, io};
 use log::debug;
 use ratatui::{crossterm::{execute, terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}}, layout::{Alignment, Constraint, Direction, Layout}, prelude::CrosstermBackend, style::{Color, Modifier, Style}, text::Line, widgets::Paragraph, Terminal};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use tempfile::NamedTempFile;
 use std::time::{Duration, Instant};
 
 use crate::installer::{systempkgs::init_nixpkgs, InstallProgress, Installer, Menu, Page, Signal};
@@ -165,6 +166,71 @@ fn main() -> anyhow::Result<()> {
 	Ok(())
 }
 
+fn handle_signal(signal: Signal, page_stack: &mut Vec<Box<dyn Page>>, installer: &mut Installer) -> anyhow::Result<bool> {
+	match signal {
+		Signal::Wait => {
+			// Do nothing
+		}
+		Signal::Push(new_page) => {
+			page_stack.push(new_page);
+		}
+		Signal::Pop => {
+			page_stack.pop();
+		}
+		Signal::PopCount(n) => {
+			for _ in 0..n {
+				if page_stack.len() > 1 {
+					page_stack.pop();
+				}
+			}
+		}
+		Signal::Unwind => {
+			// Used to return to the main menu
+			while page_stack.len() > 1 {
+				page_stack.pop();
+			}
+		}
+		Signal::Quit => {
+			debug!("Quit signal received");
+			return Ok(true); // Signal to quit
+		}
+		Signal::WriteCfg => {
+			use std::io::Write;
+			debug!("WriteCfg signal received");
+
+			// Generate JSON configuration
+			let config_json = installer.to_json()?;
+			debug!("Generated config JSON: {}", serde_json::to_string_pretty(&config_json)?);
+
+			// Create NixSerializer and generate Nix configs
+			let serializer = crate::nixgen::NixWriter::new(config_json);
+
+			match serializer.write_configs() {
+				Ok(cfg) => {
+					debug!("system config: {}", cfg.system);
+					debug!("disko config: {}", cfg.disko);
+					debug!("flake_path: {:?}", cfg.flake_path);
+					let mut system_cfg = NamedTempFile::new()?;
+					let mut disko_cfg = NamedTempFile::new()?;
+
+					write!(system_cfg, "{}", cfg.system)?;
+					write!(disko_cfg, "{}", cfg.disko)?;
+
+					page_stack.push(Box::new(InstallProgress::new(installer.clone(), system_cfg, disko_cfg)?));
+				}
+				Err(e) => {
+					debug!("Failed to write configuration files: {e}");
+					return Err(anyhow::anyhow!("Configuration write failed: {e}"));
+				}
+			}
+		}
+		Signal::Error(err) => {
+			return Err(anyhow::anyhow!("{}", err));
+		}
+	}
+	Ok(false) // Continue running
+}
+
 pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> anyhow::Result<()> {
 
 	let mut installer = Installer::new();
@@ -212,6 +278,13 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 			}
 		})?;
 
+		if let Some(page) = page_stack.last()
+			&& let Some(signal) = page.signal()
+			&& handle_signal(signal, &mut page_stack, &mut installer)?
+		{
+			break
+		}
+
 		let timeout = tick_rate
 			.checked_sub(last_tick.elapsed())
 			.unwrap_or_else(|| Duration::from_secs(0));
@@ -223,69 +296,9 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 				}
 
 				if let Some(page) = page_stack.last_mut() {
-					match page.handle_input(&mut installer, key) {
-						Signal::Wait => {
-							// Do nothing
-						}
-						Signal::Push(new_page) => {
-							page_stack.push(new_page);
-						}
-						Signal::Pop => {
-							page_stack.pop();
-						}
-						Signal::PopCount(n) => {
-							for _ in 0..n {
-								if page_stack.len() > 1 {
-									page_stack.pop();
-								}
-							}
-						}
-						Signal::Unwind => {
-							// Used to return to the main menu
-							while page_stack.len() > 1 {
-								page_stack.pop();
-							}
-						}
-						Signal::Quit => {
-							debug!("Quit signal received");
-							return Ok(());
-						}
-						Signal::WriteCfg => {
-							debug!("WriteCfg signal received");
-
-							// Generate JSON configuration
-							let config_json = installer.to_json()?;
-							debug!("Generated config JSON: {}", serde_json::to_string_pretty(&config_json)?);
-
-							// Create NixSerializer and generate Nix configs
-							let serializer = crate::nixgen::NixWriter::new(config_json);
-
-							match serializer.write_configs() {
-								Ok(cfg) => {
-									debug!("system config: {}", cfg.system);
-									debug!("disko config: {}", cfg.disko);
-									debug!("flake_path: {:?}", cfg.flake_path);
-									std::fs::write("/tmp/configuration.nix", cfg.system)
-										.map_err(|e| {
-											debug!("Failed to write system configuration file: {e}");
-											anyhow::anyhow!("Failed to write system configuration file: {e}")
-										})?;
-									std::fs::write("/tmp/disko.nix", cfg.disko)
-										.map_err(|e| {
-											debug!("Failed to write disko configuration file: {e}");
-											anyhow::anyhow!("Failed to write disko configuration file: {e}")
-										})?;
-									page_stack.push(Box::new(InstallProgress::new(installer.clone())?));
-								}
-								Err(e) => {
-									debug!("Failed to write configuration files: {e}");
-									return Err(anyhow::anyhow!("Configuration write failed: {e}"));
-								}
-							}
-						}
-						Signal::Error(err) => {
-							return Err(anyhow::anyhow!("{}", err));
-						}
+					let signal = page.handle_input(&mut installer, key);
+					if handle_signal(signal, &mut page_stack, &mut installer)? {
+						break
 					}
 				} else {
 					// No pages, push the initial page
@@ -299,10 +312,5 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 		}
 	}
 
-	/*
-		 let _ = disable_raw_mode();
-		 execute!(io::stdout(), LeaveAlternateScreen)?;
-
-		 Ok(())
-		 */
+	Ok(())
 }

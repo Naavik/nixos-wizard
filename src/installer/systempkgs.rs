@@ -1,4 +1,4 @@
-use std::{collections::{BTreeMap, HashSet}, process::Command, sync::LazyLock};
+use std::{collections::{BTreeMap, HashSet}, sync::LazyLock};
 
 use ratatui::{crossterm::event::KeyCode, layout::Constraint, text::Line};
 use serde_json::Value;
@@ -361,6 +361,10 @@ impl Page for SystemPackages {
 				KeyCode::Esc | KeyCode::Char('q') => {
 					Signal::Pop
 				}
+				KeyCode::Left | KeyCode::Char('l') => {
+					self.focus_available();
+					Signal::Wait
+				}
 				KeyCode::Down | KeyCode::Char('j') => {
 					self.selected.next_item();
 					Signal::Wait
@@ -393,6 +397,10 @@ impl Page for SystemPackages {
 			match event.code {
 				KeyCode::Esc | KeyCode::Char('q') => {
 					Signal::Pop
+				}
+				KeyCode::Right | KeyCode::Char('h') => {
+					self.focus_selected();
+					Signal::Wait
 				}
 				KeyCode::Down | KeyCode::Char('j') => {
 					self.available.next_item();

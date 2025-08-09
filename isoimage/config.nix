@@ -1,4 +1,4 @@
-{ pkgs, modulesPath, diskoPkg, nixosWizard, ... }: {
+{ pkgs, modulesPath, nixosWizard, ... }: {
   imports = [
     "${modulesPath}/installer/cd-dvd/installation-cd-minimal.nix"
   ];
@@ -7,7 +7,6 @@
     pkgs.nixfmt
     pkgs.nixfmt-classic
     nixosWizard
-    diskoPkg
   ];
 
   nix.settings.experimental-features = [ "nix-command" "flakes" ];

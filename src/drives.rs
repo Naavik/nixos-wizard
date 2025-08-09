@@ -498,7 +498,7 @@ impl Disk {
 		self.layout = new_new_layout;
 	}
 
-	pub fn use_default_layout(&mut self) {
+	pub fn use_default_layout(&mut self, fs_type: Option<String>) {
 		// 1. Remove all free space
 		// 2. Set all existing/modified partitions to deleted
 		// 3. Create a boot and root partition
@@ -530,7 +530,7 @@ impl Disk {
 			self.sector_size,
 			PartStatus::Create,
 			None,
-			Some("ext4".into()),
+			fs_type,
 			Some("/".into()),
 			Some("ROOT".into()),
 			false,

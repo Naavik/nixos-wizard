@@ -1,9 +1,11 @@
 use std::{collections::VecDeque, fmt::{Debug, Display}, io::Write, process::{Command, Stdio}};
 
-use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Constraint, Direction, Layout, Rect}, style::{Color, Modifier, Style}, text::Line, widgets::{Block, Borders, Paragraph, Wrap}, prelude::Alignment, Frame};
+use ansi_to_tui::IntoText;
+use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers}, layout::{Constraint, Direction, Layout, Rect}, prelude::Alignment, style::{Color, Modifier, Style}, text::Line, widgets::{Block, Borders, Paragraph, Wrap}, Frame};
 use serde_json::Value;
+use tempfile::NamedTempFile;
 
-use crate::{command, drives::{part_table, Disk, DiskItem}, installer::{systempkgs::NIXPKGS, users::User}, styled_block, widget::{Button, CheckBox, ConfigWidget, HelpModal, InfoBox, InstallSteps, LineEditor, ProgressBar, StrList, WidgetBox, WidgetBoxBuilder}};
+use crate::{command, drives::{part_table, Disk, DiskItem}, installer::{systempkgs::NIXPKGS, users::User}, nixgen::highlight_nix, styled_block, widget::{Button, CheckBox, ConfigWidget, HelpModal, InfoBox, InstallSteps, LineEditor, ProgressBar, StrList, WidgetBox, WidgetBoxBuilder}};
 
 const HIGHLIGHT: Option<(Color,Modifier)> = Some((Color::Yellow, Modifier::BOLD));
 
@@ -56,6 +58,13 @@ pub struct Installer {
 impl Installer {
 	pub fn new() -> Self {
 		Self::default()
+	}
+
+	pub fn has_all_requirements(&self) -> bool {
+		self.root_passwd_hash.is_some()
+			&& !self.users.is_empty()
+			&& self.drive_config.is_some()
+			&& self.bootloader.is_some()
 	}
 	pub fn make_drive_config_display(&mut self) {
 		let Some(drive) = &self.drive_config else {
@@ -138,6 +147,12 @@ pub trait Page {
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal;
 	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		("Help".to_string(), vec![Line::from("No help available for this page.")])
+	}
+
+	/// This is used as an escape hatch for pages that need to send a signal without user input
+	/// This method is called on every redraw
+	fn signal(&self) -> Option<Signal> {
+		None
 	}
 }
 
@@ -347,6 +362,7 @@ impl MenuPages {
 
 pub struct Menu {
 	menu_items: StrList,
+	border_flash_timer: u32,
 	button_row: WidgetBox,
 	help_modal: HelpModal<'static>,
 }
@@ -375,9 +391,9 @@ impl Menu {
 			vec![(None, "Configure all required options before proceeding.")],
 		]);
 		let help_modal = HelpModal::new("Main Menu", help_content);
-		Self { menu_items, button_row, help_modal }
+		Self { menu_items, button_row, help_modal, border_flash_timer: 0 }
 	}
-	pub fn info_box_for_item(&self, installer: &mut Installer, idx: usize) -> WidgetBox {
+	pub fn info_box_for_item(&mut self, installer: &mut Installer, idx: usize) -> WidgetBox {
 		// Get the actual page from supported_pages using the index
 		let supported_pages = MenuPages::supported_pages();
 		let page = supported_pages.get(idx).copied();
@@ -395,7 +411,15 @@ impl Menu {
 				])
 			)
 		};
-		let info_box = Box::new(InfoBox::new(title, content));
+		let mut info_box = Box::new(InfoBox::new(title, content));
+		if self.border_flash_timer > 0 {
+			match self.border_flash_timer % 2 {
+				1 => info_box.highlighted(true),
+				0 => info_box.highlighted(false),
+				_ => unreachable!()
+			}
+			self.border_flash_timer -= 1;
+		}
 		if let Some(widget) = display_widget {
 			WidgetBoxBuilder::new()
 				.layout(
@@ -418,7 +442,7 @@ impl Menu {
 		}
 
 	}
-	pub fn remaining_requirements(&self, installer: &mut Installer) -> InfoBox<'_> {
+	pub fn remaining_requirements(&self, installer: &mut Installer, border_flash_timer: u32) -> InfoBox<'_> {
 		let mut lines = vec![];
 		if installer.root_passwd_hash.is_none() {
 			lines.push(vec![(Some((Color::Red, Modifier::BOLD)), " - Root Password")]);
@@ -429,6 +453,9 @@ impl Menu {
 		if installer.users.is_empty() {
 			lines.push(vec![(Some((Color::Red, Modifier::BOLD)), " - At least one User Account")]);
 		}
+		if installer.bootloader.is_none() {
+			lines.push(vec![(Some((Color::Red, Modifier::BOLD)), " - Bootloader")]);
+		}
 		if lines.is_empty() {
 			lines.push(vec![(Some((Color::Green, Modifier::BOLD)), "All required options have been configured!")]);
 		} else {
@@ -436,7 +463,15 @@ impl Menu {
 			lines.push(vec![(None, "Please configure them before proceeding.")]);
 		}
 
-		InfoBox::new("Required Config", styled_block(lines))
+		let mut info_box = InfoBox::new("Required Config", styled_block(lines));
+		if border_flash_timer > 0 {
+			match self.border_flash_timer % 2 {
+				1 => info_box.highlighted(true),
+				0 => info_box.highlighted(false),
+				_ => unreachable!()
+			}
+		}
+		info_box
 	}
 }
 
@@ -481,15 +516,27 @@ impl Page for Menu {
 
 		self.menu_items.render(f, left_chunks[0]);
 		self.button_row.render(f, left_chunks[1]);
-		let info_box: Box<dyn ConfigWidget> = if self.menu_items.is_focused() {
-			Box::new(self.info_box_for_item(installer, self.menu_items.selected_idx)) as Box<dyn ConfigWidget>
-		} else {
-			Box::new(self.remaining_requirements(installer)) as Box<dyn ConfigWidget>
-		};
-		info_box.render(f, right_chunks[0]);
+		let border_flash_timer = self.border_flash_timer;
+		let decrement_timer = border_flash_timer > 0;
+		{ // genuinely insane that this scoping trickery is actually necessary here
+			let info_box: Box<dyn ConfigWidget> = if self.menu_items.is_focused() {
+				Box::new(self.info_box_for_item(installer, self.menu_items.selected_idx)) as Box<dyn ConfigWidget>
+			} else {
+				Box::new(self.remaining_requirements(installer,border_flash_timer)) as Box<dyn ConfigWidget>
+			};
 
-		// Render help modal on top of everything
-		self.help_modal.render(f, area);
+			info_box.render(f, right_chunks[0]);
+
+
+
+			// Render help modal on top of everything
+			self.help_modal.render(f, area);
+		}
+		{
+			if decrement_timer {
+				self.border_flash_timer -= 1;
+			}
+		}
 	}
 
 	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
@@ -592,9 +639,14 @@ impl Page for Menu {
 				} else if self.button_row.is_focused() {
 					match self.button_row.selected_child() {
 						Some(0) => { // Done - Show config preview
-							match ConfigPreview::new(installer) {
-								Ok(preview) => Signal::Push(Box::new(preview)),
-								Err(e) => Signal::Error(anyhow::anyhow!("Failed to generate configuration preview: {}", e)),
+							if installer.has_all_requirements() {
+								match ConfigPreview::new(installer) {
+									Ok(preview) => Signal::Push(Box::new(preview)),
+									Err(e) => Signal::Error(anyhow::anyhow!("Failed to generate configuration preview: {}", e)),
+								}
+							} else {
+								self.border_flash_timer = 6;
+								Signal::Wait
 							}
 						}
 						Some(1) => Signal::Quit,     // Abort
@@ -885,7 +937,7 @@ pub struct KeyboardLayout {
 impl KeyboardLayout {
 	pub fn new() -> Self {
 		let layouts = vec![
-			"us",
+			"us(qwerty)",
 			"us(dvorak)",
 			"us(colemak)",
 			"uk",
@@ -2637,6 +2689,7 @@ pub struct ConfigPreview {
 	button_row: WidgetBox,
 	current_view: ConfigView,
 	help_modal: HelpModal<'static>,
+	visible_lines: usize,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -2646,6 +2699,15 @@ enum ConfigView {
 }
 
 impl ConfigPreview {
+	fn get_max_scroll(&self, visible_lines: usize) -> usize {
+		let config_content = match self.current_view {
+			ConfigView::System => &self.system_config,
+			ConfigView::Disko => &self.disko_config,
+		};
+		let lines = config_content.lines().count();
+		lines.saturating_sub(visible_lines)
+	}
+
 	pub fn new(installer: &mut Installer) -> anyhow::Result<Self> {
 		// Generate the configuration like the main app does
 		let config_json = installer.to_json()?;
@@ -2654,12 +2716,10 @@ impl ConfigPreview {
 		let configs = serializer.write_configs()?;
 
 		let buttons: Vec<Box<dyn ConfigWidget>> = vec![
-			Box::new(Button::new("Save & Exit")),
+			Box::new(Button::new("Begin Installation")),
 			Box::new(Button::new("Back")),
 		];
-		let button_row = WidgetBoxBuilder::new()
-			.children(buttons)
-			.build();
+		let button_row = WidgetBox::button_menu(buttons);
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "1/2"), (None, " - Switch between System/Disko config")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Scroll config content")],
@@ -2681,7 +2741,8 @@ impl ConfigPreview {
 			scroll_position: 0,
 			button_row,
 			current_view: ConfigView::System,
-			help_modal
+			help_modal,
+			visible_lines: 10, // Default value, will be updated during rendering
 		})
 	}
 }
@@ -2733,20 +2794,18 @@ impl Page for ConfigPreview {
 
 		// Config content
 		let config_content = match self.current_view {
-			ConfigView::System => &self.system_config,
-			ConfigView::Disko => &self.disko_config,
+			ConfigView::System => highlight_nix(&self.system_config).unwrap_or_default(),
+			ConfigView::Disko => highlight_nix(&self.disko_config).unwrap_or_default(),
 		};
+		log::debug!("Rendering config preview with text {config_content:?}");
 
-		let lines: Vec<&str> = config_content.lines().collect();
+		let lines: Vec<Line<'_>> = config_content.into_text().unwrap().lines;
 		let visible_lines = chunks[1].height as usize - 2; // Account for borders
+		self.visible_lines = visible_lines;
 
 		let start_line = self.scroll_position;
 		let end_line = std::cmp::min(start_line + visible_lines, lines.len());
-
-		let display_lines: Vec<Line<'_>> = lines[start_line..end_line]
-			.iter()
-			.map(|line| Line::from(*line))
-			.collect();
+		let display_lines = lines[start_line..end_line].to_vec();
 
 		let config_paragraph = Paragraph::new(display_lines)
 			.block(Block::default()
@@ -2757,7 +2816,7 @@ impl Page for ConfigPreview {
 						ConfigView::Disko => "Disko",
 					},
 					start_line + 1,
-					lines.len().saturating_sub(visible_lines).max(1))))
+					self.get_max_scroll(visible_lines) + 1)))
 			.wrap(Wrap { trim: false });
 		f.render_widget(config_paragraph, chunks[1]);
 
@@ -2797,31 +2856,37 @@ impl Page for ConfigPreview {
 				Signal::Wait
 			}
 			KeyCode::Char('1') => {
+				self.button_row.unfocus();
 				self.current_view = ConfigView::System;
 				self.scroll_position = 0;
 				Signal::Wait
 			}
 			KeyCode::Char('2') => {
+				self.button_row.unfocus();
 				self.current_view = ConfigView::Disko;
 				self.scroll_position = 0;
 				Signal::Wait
 			}
 			KeyCode::Up | KeyCode::Char('k') => {
 				if self.button_row.is_focused() {
-					self.button_row.unfocus();
+					if !self.button_row.prev_child() {
+						self.button_row.unfocus();
+					}
 				} else if self.scroll_position > 0 {
 					self.scroll_position -= 1;
 				}
 				Signal::Wait
 			}
 			KeyCode::Down | KeyCode::Char('j') => {
-				let config_content = match self.current_view {
-					ConfigView::System => &self.system_config,
-					ConfigView::Disko => &self.disko_config,
-				};
-				let max_scroll = config_content.lines().count().saturating_sub(1);
-				if self.scroll_position < max_scroll {
-					self.scroll_position += 1;
+				if self.button_row.is_focused() {
+					self.button_row.next_child();
+				} else {
+					let max_scroll = self.get_max_scroll(self.visible_lines);
+					if self.scroll_position < max_scroll {
+						self.scroll_position += 1;
+					} else if !self.button_row.is_focused() {
+						self.button_row.focus();
+					}
 				}
 				Signal::Wait
 			}
@@ -2860,11 +2925,7 @@ impl Page for ConfigPreview {
 				Signal::Wait
 			}
 			KeyCode::PageDown => {
-				let config_content = match self.current_view {
-					ConfigView::System => &self.system_config,
-					ConfigView::Disko => &self.disko_config,
-				};
-				let max_scroll = config_content.lines().count().saturating_sub(1);
+				let max_scroll = self.get_max_scroll(self.visible_lines);
 				self.scroll_position = std::cmp::min(self.scroll_position + 10, max_scroll);
 				Signal::Wait
 			}
@@ -2900,11 +2961,20 @@ pub struct InstallProgress<'a> {
 	steps: InstallSteps<'a>,
 	progress_bar: ProgressBar,
 	help_modal: HelpModal<'static>,
+	signal: Option<Signal>,
+
+	// we only hold onto these to keep them alive during installation
+	_system_cfg: NamedTempFile,
+	_disko_cfg: NamedTempFile,
 }
 
 impl<'a> InstallProgress<'a> {
-	pub fn new(installer: Installer) -> anyhow::Result<Self> {
-		let install_steps = Self::install_commands(&installer)?;
+	pub fn new(installer: Installer, system_cfg: NamedTempFile, disko_cfg: NamedTempFile) -> anyhow::Result<Self> {
+		let install_steps = Self::install_commands(
+			&installer,
+			system_cfg.path().to_str().ok_or_else(|| anyhow::anyhow!("Invalid system config path"))?.to_string(),
+			disko_cfg.path().to_str().ok_or_else(|| anyhow::anyhow!("Invalid disko config path"))?.to_string(),
+		)?;
 		let steps = InstallSteps::new("Installing NixOS", install_steps);
 		let progress_bar = ProgressBar::new("Progress", 0);
 
@@ -2918,7 +2988,7 @@ impl<'a> InstallProgress<'a> {
 		]);
 		let help_modal = HelpModal::new("Installation Progress", help_content);
 
-		Ok(Self { _installer: installer, steps, progress_bar, help_modal })
+		Ok(Self { _installer: installer, steps, progress_bar, help_modal, signal: None, _system_cfg: system_cfg, _disko_cfg: disko_cfg })
 	}
 
 	pub fn is_complete(&self) -> bool {
@@ -2928,7 +2998,7 @@ impl<'a> InstallProgress<'a> {
 	pub fn has_error(&self) -> bool {
 		self.steps.has_error()
 	}
-	fn install_commands(_installer: &Installer) -> anyhow::Result<Vec<(Line<'static>, VecDeque<Command>)>> {
+	fn install_commands(_installer: &Installer, system_cfg_path: String, disk_cfg_path: String) -> anyhow::Result<Vec<(Line<'static>, VecDeque<Command>)>> {
 		Ok(vec![
 			(Line::from("Beginning NixOS Installation..."),
 			 vec![
@@ -2938,12 +3008,12 @@ impl<'a> InstallProgress<'a> {
 			(Line::from("Configuring disk layout..."),
 			 vec![
 				command!("echo", "Partitioning disks..."),
-				command!("sh", "-c", "disko --yes-wipe-all-disks --mode destroy,format,mount /tmp/disko.nix 2>&1 > /dev/null"),
+				command!("sh", "-c", format!("disko --yes-wipe-all-disks --mode destroy,format,mount {disk_cfg_path} 2>&1 > /dev/null")),
 			 ].into()),
 			(Line::from("Building NixOS configuration..."),
 			 vec![
 				command!("sh", "-c", "nixos-generate-config --root /mnt"),
-				command!("cp", "/tmp/configuration.nix", "/mnt/etc/nixos/configuration.nix"),
+				command!("cp", format!("{system_cfg_path}"), "/mnt/etc/nixos/configuration.nix"),
 				command!("echo", "Build completed")
 			 ].into()),
 			(Line::from("Installing NixOS..."),
@@ -2982,11 +3052,31 @@ impl<'a> Page for InstallProgress<'a> {
 
 		// Update progress bar with completion percentage
 		let progress = (self.steps.progress() * 100.0) as u32;
+		if progress == 100 || self.steps.is_complete() {
+			self.signal = Some(Signal::Push(Box::new(InstallComplete::new())));
+		}
 		self.progress_bar.set_progress(progress);
 		self.progress_bar.render(f, chunks[1]);
 
 		// Help modal
 		self.help_modal.render(f, area);
+	}
+
+	fn signal(&self) -> Option<Signal> {
+		if let Some(ref signal) = self.signal {
+			match signal {
+				Signal::Wait => Some(Signal::Wait),
+				Signal::Push(_) => Some(Signal::Push(Box::new(InstallComplete::new()))),
+				Signal::Pop => Some(Signal::Pop),
+				Signal::PopCount(n) => Some(Signal::PopCount(*n)),
+				Signal::Quit => Some(Signal::Quit),
+				Signal::WriteCfg => Some(Signal::WriteCfg),
+				Signal::Unwind => Some(Signal::Unwind),
+				Signal::Error(_) => Some(Signal::Wait),
+			}
+		} else {
+			None
+		}
 	}
 
 	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
@@ -3004,22 +3094,53 @@ impl<'a> Page for InstallProgress<'a> {
 	}
 
 	fn handle_input(&mut self, _installer: &mut Installer, event: KeyEvent) -> Signal {
-		match event.code {
-			KeyCode::Char('?') => {
-				self.help_modal.toggle();
-				Signal::Wait
-			}
-			KeyCode::Esc if self.help_modal.visible => {
-				self.help_modal.hide();
-				Signal::Wait
-			}
-			_ if self.help_modal.visible => {
-				Signal::Wait
-			}
-			KeyCode::Esc => Signal::Pop,
-			_ => {
-				Signal::Wait
-			}
+		if event.code == KeyCode::Char('c') && event.modifiers.contains(KeyModifiers::CONTROL) {
+			return Signal::Quit;
 		}
+		Signal::Wait
+	}
+}
+
+pub struct InstallComplete {
+	text_box: InfoBox<'static>,
+}
+
+impl InstallComplete {
+	pub fn new() -> Self {
+		let content = styled_block(vec![
+			vec![(None, "NixOS has been successfully installed on your system!")],
+			vec![(None, "")],
+			vec![(None, "You can now reboot your computer and remove the installation media.")],
+			vec![(None, "")],
+			vec![(None, "Press any key to exit the installer.")],
+		]);
+		let text_box = InfoBox::new("Installation Complete", content);
+		Self { text_box }
+	}
+}
+
+impl Default for InstallComplete {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Page for InstallComplete {
+	fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
+		let chunks = Layout::default()
+			.direction(Direction::Vertical)
+			.margin(1)
+			.constraints(
+				[
+				Constraint::Percentage(100),
+				]
+				.as_ref(),
+			)
+			.split(area);
+		self.text_box.render(f, chunks[0]);
+	}
+
+	fn handle_input(&mut self, _installer: &mut Installer, _event: KeyEvent) -> Signal {
+		Signal::Quit
 	}
 }

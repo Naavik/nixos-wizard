@@ -30,6 +30,29 @@ pub fn fmt_nix(nix: String) -> anyhow::Result<String> {
 		Err(anyhow::anyhow!("nixfmt failed: {}", err))
 	}
 }
+pub fn highlight_nix(nix: &str) -> anyhow::Result<String> {
+	let mut bat_child = Command::new("bat")
+		.arg("-p")
+		.arg("-f")
+		.arg("-l")
+		.arg("nix")
+		.stdin(Stdio::piped())
+		.stdout(Stdio::piped())
+		.spawn()?;
+	if let Some(stdin) = bat_child.stdin.as_mut() {
+		use std::io::Write;
+		stdin.write_all(nix.as_bytes())?;
+	}
+
+	let output = bat_child.wait_with_output()?;
+	if output.status.success() {
+		let highlighted = String::from_utf8(output.stdout)?;
+		Ok(highlighted)
+	} else {
+		let err = String::from_utf8_lossy(&output.stderr);
+		Err(anyhow::anyhow!("bat failed: {}", err))
+	}
+}
 
 pub struct NixSerializer {
 	pub config: Value,
@@ -259,10 +282,12 @@ impl NixWriter {
 		}
 	}
 	fn parse_kb_layout(value: &str) -> String {
+		let value = if value == "us(qwerty)" { "us" } else { value };
 		attrset! {
 			"services.xserver.xkb.layout" = nixstr(value);
 		}
 	}
+
 	#[allow(clippy::ptr_arg)]
 	fn parse_kernels(kernels: &Vec<Value>) -> String {
 		if kernels.is_empty() {

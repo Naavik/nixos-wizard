@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, io::{BufRead, BufReader, Read}, os::fd::{FromRawFd, IntoRawFd, OwnedFd}, process::{Child, ChildStderr, ChildStdout, Command, Stdio}};
 use portable_pty::{PtySize, CommandBuilder};
-use throbber_widgets_tui::{ThrobberState, BRAILLE_EIGHT};
+use throbber_widgets_tui::{ThrobberState, BOX_DRAWING, BRAILLE_EIGHT};
 
 use ansi_to_tui::IntoText;
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
@@ -955,15 +955,20 @@ impl ConfigWidget for StrList {
 
 pub struct InfoBox<'a> {
 	pub title: String,
-	pub content: Vec<Line<'a>>
+	pub content: Vec<Line<'a>>,
+	pub highlighted: bool
 }
 
 impl<'a> InfoBox<'a> {
 	pub fn new(title: impl Into<String>, content: Vec<Line<'a>>) -> Self {
 		Self {
 			title: title.into(),
-			content
+			content,
+			highlighted: false,
 		}
+	}
+	pub fn highlighted(&mut self, highlighted: bool) {
+		self.highlighted = highlighted;
 	}
 }
 
@@ -972,8 +977,18 @@ impl<'a> ConfigWidget for InfoBox<'a> {
 		Signal::Wait
 	}
 	fn render(&self, f: &mut Frame, area: Rect) {
+		let block = if self.highlighted {
+			Block::default()
+				.title(self.title.clone())
+				.borders(Borders::ALL)
+				.border_style(Style::default().fg(Color::Yellow))
+		} else {
+			Block::default()
+				.title(self.title.clone())
+				.borders(Borders::ALL)
+		};
 		let paragraph = Paragraph::new(self.content.clone())
-			.block(Block::default().title(self.title.clone()).borders(Borders::ALL))
+			.block(block)
 			.wrap(ratatui::widgets::Wrap { trim: true });
 		f.render_widget(paragraph, area);
 	}
@@ -1211,7 +1226,12 @@ impl<'a> InstallSteps<'a> {
 		if self.num_steps == 0 {
 			1.0
 		} else {
-			self.current_step_index as f64 / self.num_steps as f64
+			let num_completed = self.steps
+				.iter()
+				.filter(|step| step.1 == StepStatus::Completed)
+				.count();
+
+			num_completed as f64 / self.num_steps as f64
 		}
 	}
 
@@ -1324,8 +1344,8 @@ impl<'a> ConfigWidget for InstallSteps<'a> {
 			let (prefix, style) = match status {
 				StepStatus::Inactive => ("  ", Style::default().fg(Color::DarkGray)),
 				StepStatus::Running => {
-					let idx = (self.throbber_state.index() % 8) as usize;
-					let throbber_symbol = BRAILLE_EIGHT.symbols[idx];
+					let idx = (self.throbber_state.index() % 4) as usize;
+					let throbber_symbol = BOX_DRAWING.symbols[idx];
 					(throbber_symbol, Style::default().fg(Color::Cyan))
 				},
 				StepStatus::Completed => ("✓ ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
