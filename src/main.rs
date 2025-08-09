@@ -134,15 +134,7 @@ fn main() -> anyhow::Result<()> {
 		}
 	}));
 
-	unsafe {
-		env::set_var("RUST_LOG", "debug");
-		env::set_var("RUST_LOG_STYLE", "never");
-	};
-	let log = Box::new(OpenOptions::new().append(true).create(true).open("tui-debug.log")?);
-	env_logger::Builder::from_default_env()
-		.format_timestamp(None)
-		.target(env_logger::Target::Pipe(log))
-		.init();
+	env_logger::init();
 	debug!("Logger initialized");
 	init_nixpkgs();
 
