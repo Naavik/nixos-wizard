@@ -148,6 +148,11 @@ impl NixWriter {
 			}
 		}
 
+		let state_version = attrset! {
+			"system.stateVersion" = nixstr("25.11");
+		};
+		cfg_attrs = merge_attrs!(cfg_attrs, state_version);
+
 		let raw = format!("{{ config, pkgs, ... }}: {cfg_attrs}");
 		fmt_nix(raw)
 	}
