@@ -2,15 +2,6 @@
 
 A terminal-based installer for NixOS, similar to `archinstall` for Arch Linux. This project provides an interactive TUI (Terminal User Interface) to guide users through the NixOS installation process.
 
-## ⚠️ Development Status
-
-**This project is in early development and should be considered experimental.**
-
-- The installer logic is functional but still being refined
-- Some features may be incomplete or change significantly
-- Use at your own risk - always have backups and recovery plans
-- Not recommended for production systems yet
-
 ## Features
 
 - Interactive terminal-based interface using Ratatui
