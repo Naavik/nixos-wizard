@@ -28,6 +28,7 @@ pub fn styled_block<'a>(lines: Vec<Vec<(LineStyle, impl ToString)>>) -> Vec<Line
 }
 
 #[macro_export]
+/// Sets up a new, unspawned std::process::Command
 macro_rules! command {
     ($cmd:expr, $($arg:expr),* $(,)?) => {{
 			use std::process::Command;
@@ -43,6 +44,7 @@ macro_rules! command {
 }
 
 #[macro_export]
+/// Creates a Nix attribute set using similar syntax.
 macro_rules! attrset {
 	{$($key:tt = $val:expr);+ ;} => {{
 		let mut parts = vec![];
@@ -54,6 +56,7 @@ macro_rules! attrset {
 }
 
 #[macro_export]
+/// Merges two attribute sets.
 macro_rules! merge_attrs {
 	($($set:expr),* $(,)?) => {{
 		let mut merged = String::new();
@@ -73,6 +76,7 @@ macro_rules! merge_attrs {
 }
 
 #[macro_export]
+/// Creates a Nix list
 macro_rules! list {
 	($($item:expr),* $(,)?) => {
 		{
@@ -223,6 +227,10 @@ fn handle_signal(signal: Signal, page_stack: &mut Vec<Box<dyn Page>>, installer:
 	Ok(false) // Continue running
 }
 
+/// The main event loop
+///
+/// Uses a stack of Pages to manage navigation
+/// Receives Signals from the pages to decide what to do
 pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> anyhow::Result<()> {
 
 	let mut installer = Installer::new();
@@ -242,7 +250,7 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 				])
 				.split(f.area());
 
-			// Draw header with three columns: empty, title, help text
+			// Draw header with three columns: help text, title, empty
 			let header_chunks = Layout::default()
 				.direction(Direction::Horizontal)
 				.constraints([
@@ -274,6 +282,7 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 			&& let Some(signal) = page.signal()
 			&& handle_signal(signal, &mut page_stack, &mut installer)?
 		{
+			// If we are here, then we have received Signal::Quit
 			break
 		}
 
@@ -283,17 +292,16 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 
 		if event::poll(timeout)? {
 			if let Event::Key(key) = event::read()? {
-				if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
-				    panic!("Test panic - this should show in terminal after cleanup!");
-				}
-
 				if let Some(page) = page_stack.last_mut() {
+					// Send the input to the page on top of the stack
 					let signal = page.handle_input(&mut installer, key);
+
 					if handle_signal(signal, &mut page_stack, &mut installer)? {
+						// If we are here, then we have received Signal::Quit
 						break
 					}
 				} else {
-					// No pages, push the initial page
+					// No pages somehow, push the initial page
 					page_stack.push(Box::new(Menu::new()));
 				}
 			}

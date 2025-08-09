@@ -40,8 +40,6 @@ pub struct Installer {
 
 
 	pub drives: Vec<Disk>,
-	pub selected_drive: Option<usize>, // drive index
-	pub selected_partition: Option<u64>, // partition id
 
 	pub drive_config: Option<Disk>,
 	pub use_auto_drive_config: bool,
@@ -76,6 +74,7 @@ impl Installer {
 
 	pub fn to_json(&mut self) -> anyhow::Result<serde_json::Value> {
 		// Create the installer configuration JSON
+		// This is used as an intermediate representation before being serialized into Nix
 		let sys_config = serde_json::json!({
 			"hostname": self.hostname,
 			"language": self.language,
@@ -124,7 +123,7 @@ pub enum Signal {
 	Quit,
 	WriteCfg,
 	Unwind, // Pop until we get back to the menu
-	Error(anyhow::Error), // Used for error handling, like when a drive is not selected
+	Error(anyhow::Error), // Propagates errors
 }
 
 impl Debug for Signal {
@@ -158,27 +157,26 @@ pub trait Page {
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(usize)]
 pub enum MenuPages {
-	SourceFlake = 0,
-	Language = 1,
-	KeyboardLayout = 2,
-	Locale = 3,
-	EnableFlakes = 4,
-	Drives = 5,
-	Bootloader = 6,
-	Swap = 7,
-	Hostname = 8,
-	RootPassword = 9,
-	UserAccounts = 10,
-	Profile = 11,
-	Greeter = 12,
-	DesktopEnvironment = 13,
-	Audio = 14,
-	Kernels = 15,
-	SystemPackages = 16,
-	Network = 17,
-	Timezone = 18,
+	SourceFlake,
+	Language,
+	KeyboardLayout,
+	Locale,
+	EnableFlakes,
+	Drives,
+	Bootloader,
+	Swap,
+	Hostname,
+	RootPassword,
+	UserAccounts,
+	Profile,
+	Greeter,
+	DesktopEnvironment,
+	Audio,
+	Kernels,
+	SystemPackages,
+	Network,
+	Timezone,
 }
 
 impl MenuPages {
@@ -340,11 +338,13 @@ impl MenuPages {
 					loop {
 						let guard = NIXPKGS.read().unwrap();
 						if let Some(nixpkgs) = guard.as_ref() {
+							// Great, the package list has been populated
 							break nixpkgs.clone();
 						}
 						drop(guard); // Release lock before sleeping
 
 						if retries >= 5 {
+							// Last attempt to grab the package list before breaking
 							break fetch_nixpkgs().unwrap_or_default();
 						}
 
@@ -360,6 +360,7 @@ impl MenuPages {
 	}
 }
 
+/// The main menu page
 pub struct Menu {
 	menu_items: StrList,
 	border_flash_timer: u32,
@@ -447,7 +448,7 @@ impl Menu {
 		if installer.root_passwd_hash.is_none() {
 			lines.push(vec![(Some((Color::Red, Modifier::BOLD)), " - Root Password")]);
 		}
-		if installer.drives.is_empty() || installer.selected_drive.is_none() || installer.drive_config.is_none() {
+		if installer.drives.is_empty() || installer.drive_config.is_none() {
 			lines.push(vec![(Some((Color::Red, Modifier::BOLD)), " - Drive Configuration")]);
 		}
 		if installer.users.is_empty() {
@@ -2699,6 +2700,8 @@ enum ConfigView {
 }
 
 impl ConfigPreview {
+
+	/// Maximum scroll distance for config preview window
 	fn get_max_scroll(&self, visible_lines: usize) -> usize {
 		let config_content = match self.current_view {
 			ConfigView::System => &self.system_config,
@@ -2998,6 +3001,8 @@ impl<'a> InstallProgress<'a> {
 	pub fn has_error(&self) -> bool {
 		self.steps.has_error()
 	}
+
+	/// The actual installation steps
 	fn install_commands(_installer: &Installer, system_cfg_path: String, disk_cfg_path: String) -> anyhow::Result<Vec<(Line<'static>, VecDeque<Command>)>> {
 		Ok(vec![
 			(Line::from("Beginning NixOS Installation..."),
@@ -3023,6 +3028,7 @@ impl<'a> InstallProgress<'a> {
 			(Line::from("Finalizing installation..."),
 			 vec![
 				command!("sleep", "1"),
+				// TODO: Actually do something here?
 				command!("echo", "Installation complete!")
 			 ].into()),
 		])
@@ -3063,6 +3069,7 @@ impl<'a> Page for InstallProgress<'a> {
 	}
 
 	fn signal(&self) -> Option<Signal> {
+		// This lets us return a signal without any input
 		if let Some(ref signal) = self.signal {
 			match signal {
 				Signal::Wait => Some(Signal::Wait),

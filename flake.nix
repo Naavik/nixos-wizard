@@ -29,8 +29,6 @@
           diskoPkg
           pkgs.bat
           pkgs.util-linux
-          pkgs.parted
-          pkgs.e2fsprogs
         ]}
       '';
     };

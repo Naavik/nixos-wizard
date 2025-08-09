@@ -7,15 +7,13 @@ use crate::widget::TableWidget;
 
 static NEXT_PART_ID: AtomicU64 = AtomicU64::new(1);
 
-/// Hash attributes into a stable id
-///
-/// Using this function to obtain ids for each DiskEntry
-/// ensures that we can always identify an entry, even with incomplete data
-/// we hash using name, start sector, size, and parent as these are generally unchanging attributes
 pub fn get_entry_id() -> u64 {
 	NEXT_PART_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Convert 'bytes used' into something we can write into a Disko config
+///
+/// If we are anywhere close to the end of the available space, we have to return "100%", or else disko will throw a fit
 pub fn bytes_disko_cfg(bytes: u64, total_used_sectors: u64, sector_size: u64, total_size: u64) -> String {
 	let requested_sectors = bytes.div_ceil(sector_size);
 	let is_rest_of_space = (requested_sectors + total_used_sectors) >= (total_size.saturating_sub(2048));
@@ -42,6 +40,7 @@ pub fn bytes_disko_cfg(bytes: u64, total_used_sectors: u64, sector_size: u64, to
 	}
 }
 
+/// Simple byte size formatter
 pub fn bytes_readable(bytes: u64) -> String {
 	const KIB: u64 = 1 << 10;
 	const MIB: u64 = 1 << 20;
@@ -61,6 +60,7 @@ pub fn bytes_readable(bytes: u64) -> String {
 	}
 }
 
+/// Convert a size like '50 mib' to sectors
 pub fn parse_sectors(s: &str, sector_size: u64, total_sectors: u64) -> Option<u64> {
 	let s = s.trim().to_lowercase();
 
@@ -96,6 +96,7 @@ pub fn parse_sectors(s: &str, sector_size: u64, total_sectors: u64) -> Option<u6
 	s.parse::<u64>().ok()
 }
 
+/// Convert number of megabytes into sectors
 pub fn mb_to_sectors(mb: u64, sector_size: u64) -> u64 {
 	let bytes = mb * 1024 * 1024;
 	bytes.div_ceil(sector_size) // round up to nearest sector
@@ -105,7 +106,7 @@ pub fn mb_to_sectors(mb: u64, sector_size: u64) -> u64 {
 ///
 /// This is a reasonable approach for accurate data collection, and since Nix is a contender for the title of "greatest thing ever created", we can actually make the assumption that lsblk exists in this environment
 /// The installer is intended to be ran using the flake like `nix run github:km-clay/nixos-wizard`, and it runs in a wrapped environment that includes `lsblk`.
-/// So if lsblk is somehow not available, that is user error.
+/// So if lsblk is somehow not available, user error.
 pub fn lsblk() -> anyhow::Result<Vec<Disk>> {
 	let output = Command::new("lsblk")
 		.args([
@@ -139,6 +140,7 @@ pub fn lsblk() -> anyhow::Result<Vec<Disk>> {
 	Ok(disks)
 }
 
+/// Parse disk information retrieved from `lsblk`
 pub fn parse_disk(disk: Value) -> anyhow::Result<Disk> {
 	// disk is a JSON object with fields like NAME, SIZE, TYPE, MOUNTPOINT, FSTYPE, LABEL, START, PHY-SEC
 	let obj = disk.as_object().ok_or_else(|| anyhow::anyhow!("Disk entry is not an object"))?;
@@ -169,6 +171,7 @@ pub fn parse_disk(disk: Value) -> anyhow::Result<Disk> {
 	Ok(disk)
 }
 
+/// Parse partition info
 pub fn parse_partition(part: &Value) -> anyhow::Result<DiskItem> {
 	let obj = part.as_object().ok_or_else(|| anyhow::anyhow!("Partition entry is not an object"))?;
 
@@ -209,12 +212,14 @@ pub fn parse_partition(part: &Value) -> anyhow::Result<DiskItem> {
 	)))
 }
 
+/// Return a table showing available disk devices
 pub fn disk_table(disks: &[Disk]) -> TableWidget {
 	let (headers, widths): (Vec<String>, Vec<Constraint>) = DiskTableHeader::disk_table_header_info().into_iter().unzip();
 	let rows: Vec<Vec<String>> = disks.iter().map(|d| d.as_table_row(&DiskTableHeader::disk_table_headers())).collect();
 	TableWidget::new("Disks", widths, headers, rows)
 }
 
+/// Return a table showing available partitions for a disk device
 pub fn part_table(disk_items: &[DiskItem], sector_size: u64) -> TableWidget {
 	let (headers, widths): (Vec<String>, Vec<Constraint>) = DiskTableHeader::partition_table_header_info().into_iter().unzip();
 	let rows: Vec<Vec<String>> = disk_items.iter().map(|item| item.as_table_row(sector_size, &DiskTableHeader::partition_table_headers())).collect();
@@ -222,6 +227,9 @@ pub fn part_table(disk_items: &[DiskItem], sector_size: u64) -> TableWidget {
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+/// Abstraction representing disk devices
+///
+/// `initial_layout` is used to reset the disk to its original state
 pub struct Disk {
 	name: String,
 	size: u64, // sectors
@@ -253,6 +261,7 @@ impl Disk {
 		new.calculate_free_space();
 		new
 	}
+	/// Get info as a table row, based on the given field names (`headers`)
 	pub fn as_table_row(&self, headers: &[DiskTableHeader]) -> Vec<String> {
 		headers.iter().map(|h| {
 			match h {
@@ -269,6 +278,7 @@ impl Disk {
 			}
 		}).collect()
 	}
+	/// Convert the disk into a `disko` config
 	pub fn as_disko_cfg(&mut self) -> serde_json::Value {
 		let mut partitions = serde_json::Map::new();
 		for item in &self.layout {
@@ -385,6 +395,7 @@ impl Disk {
 		for item in &self.layout {
 			if let DiskItem::Partition(p) = item {
 				if p.status == PartStatus::Delete {
+					// We do not care about deleted partitions
 					continue;
 				}
 				let existing_start = p.start();
@@ -428,7 +439,7 @@ impl Disk {
 			// 1. Handle gap before this partition
 			if p.start() > cursor {
 				let size = p.start() - cursor;
-				if size > mb_to_sectors(5, self.sector_size) {
+				if size > mb_to_sectors(5, self.sector_size) { // We only care about gaps greater than 5MB in size
 					gaps.push(DiskItem::FreeSpace {
 						id: get_entry_id(),
 						start: cursor,
@@ -437,11 +448,11 @@ impl Disk {
 				}
 			}
 
-			// 3. Advance cursor past the partition
+			// 2. Advance cursor past the partition
 			cursor = p.start() + p.size();
 		}
 
-		// 4. Check for free space at the end
+		// 3. Check for free space at the end
 		if cursor < self.size {
 			let size = self.size - cursor;
 			if size > mb_to_sectors(5, self.sector_size) {
@@ -695,6 +706,7 @@ impl Partition {
 	pub fn fs_type(&self) -> Option<&str> {
 		self.fs_type.as_deref()
 	}
+	/// Disko expects `vfat` for any fat fs types
 	pub fn disko_fs_type(&self) -> Option<&'static str> {
 		match self.fs_type.as_deref()? {
 			"ext4" => Some("ext4"),
