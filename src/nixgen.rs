@@ -409,7 +409,7 @@ impl NixWriter {
 				grub = attrset! {
 					enable = true;
 					efiSupport = true;
-					device = "nodev";
+					device = nixstr("nodev");
 				};
 				"efi.canTouchEfiVariables" = true;
 			},
