@@ -267,10 +267,13 @@ impl NixWriter {
 	pub fn parse_network_backend(value: &str) -> String {
 		match value.to_lowercase().as_str() {
 			"networkmanager" => attrset! {
-				"networking.networkmanager.enable" = "true";
+				"networking.networkmanager.enable" = true;
 			},
 			"wpa_supplicant" => attrset! {
-				"networking.wireless.enable" = "true";
+				"networking.wireless.enable" = true;
+			},
+			"systemd-networkd" => attrset! {
+				"systemd.network.enable" = true;
 			},
 			_ => panic!("Unsupported network backend: {value}"),
 		}
@@ -347,25 +350,39 @@ impl NixWriter {
 	fn parse_desktop_environment(value: &str) -> String {
 		match value.to_lowercase().as_str() {
 			"gnome" => attrset! {
+				"services.xserver.enable" = true;
 				"services.xserver.desktopManager.gnome.enable" = true;
 			},
 			"hyprland" => attrset! {
 				"programs.hyprland.enable" = true;
 			},
 			"plasma" | "kde plasma" => attrset! {
+				"services.xserver.enable" = true;
 				"services.xserver.desktopManager.plasma5.enable" = true;
 			},
 			"xfce" => attrset! {
+				"services.xserver.enable" = true;
 				"services.xserver.desktopManager.xfce.enable" = true;
 			},
 			"cinnamon" => attrset! {
+				"services.xserver.enable" = true;
 				"services.xserver.desktopManager.cinnamon.enable" = true;
 			},
 			"mate" => attrset! {
+				"services.xserver.enable" = true;
 				"services.xserver.desktopManager.mate.enable" = true;
 			},
 			"lxqt" => attrset! {
+				"services.xserver.enable" = true;
 				"services.xserver.desktopManager.lxqt.enable" = true;
+			},
+			"budgie" => attrset! {
+				"services.xserver.enable" = true;
+				"services.xserver.desktopManager.budgie.enable" = true;
+			},
+			"i3" => attrset! {
+				"services.xserver.enable" = true;
+				"services.xserver.windowManager.i3.enable" = true;
 			},
 			_ => panic!("Unsupported desktop environment: {value}"),
 		}

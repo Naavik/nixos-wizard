@@ -1328,8 +1328,6 @@ impl Bootloader {
 		let loaders = [
 			"GRUB",
 			"systemd-boot",
-			"rEFInd",
-			"None (manual setup)",
 		]
 		.iter()
 		.map(|s| s.to_string())
@@ -2138,6 +2136,7 @@ impl DesktopEnvironment {
 			"XFCE",
 			"Cinnamon",
 			"MATE",
+			"lxqt",
 			"Budgie",
 			"i3",
 			"None (command line only)",
@@ -2357,7 +2356,6 @@ impl Audio {
 		let backends = [
 			"PipeWire",
 			"PulseAudio",
-			"ALSA (no sound server)",
 			"None (no audio support)",
 		]
 		.iter()
@@ -3104,7 +3102,15 @@ impl<'a> Page for InstallProgress<'a> {
 		if event.code == KeyCode::Char('c') && event.modifiers.contains(KeyModifiers::CONTROL) {
 			return Signal::Quit;
 		}
-		Signal::Wait
+		if self.has_error() {
+			match event.code {
+				KeyCode::Esc => Signal::Pop,
+				KeyCode::Char('q') => Signal::Pop,
+				_ => Signal::Wait,
+			}
+		} else {
+			Signal::Wait
+		}
 	}
 }
 

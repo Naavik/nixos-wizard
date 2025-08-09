@@ -29,6 +29,7 @@
           diskoPkg
           pkgs.bat
           pkgs.util-linux
+          pkgs.ntfs3g
         ]}
       '';
     };
