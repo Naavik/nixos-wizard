@@ -1,6 +1,8 @@
 # NixOS Wizard
 
-A terminal-based installer for NixOS, similar to `archinstall` for Arch Linux. This project provides an interactive TUI (Terminal User Interface) to guide users through the NixOS installation process.
+A terminal-based installer for NixOS, similar to `archinstall` for Arch Linux. This project provides an interactive TUI (Terminal User Interface) to guide users through the NixOS installation process. 
+
+<img width="1916" height="1021" alt="nixos-wizard" src="https://github.com/user-attachments/assets/b1e11874-a72d-4e54-b2d8-e5a5f3325ac9" />
 
 ## Features
 
