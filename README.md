@@ -10,7 +10,7 @@ A terminal-based installer for NixOS, similar to `archinstall` for Arch Linux. T
 - Guided disk partitioning and filesystem setup
 - User account creation and configuration
 - System package selection
-- NixOS configuration generation (both traditional and flake-based)
+- NixOS configuration generation
 - Real-time installation progress tracking
 
 ## Requirements
