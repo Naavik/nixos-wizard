@@ -1,6 +1,6 @@
 # nixos-wizard
 
-A terminal-based installer for NixOS, similar to `archinstall` for Arch Linux. This project provides an interactive TUI (Terminal User Interface) to guide users through the NixOS installation process. 
+A terminal-based installer for NixOS, similar to `archinstall` for Arch Linux. This project provides an interactive TUI (Terminal User Interface) to guide users through the NixOS installation process.
 
 <img width="1916" height="1021" alt="nixos-wizard" src="https://github.com/user-attachments/assets/b1e11874-a72d-4e54-b2d8-e5a5f3325ac9" />
 
@@ -49,3 +49,9 @@ The project includes configuration for building custom NixOS installer ISOs that
 # Build installer ISO
 nix build github:km-clay/nixos-wizard#nixosConfigurations.installerIso.config.system.build.isoImage
 ```
+
+## Roadmap
+
+* Implement support for creating btrfs subvolumes in the disk configuration menus
+* Implement support for configuring home-manager during user account setup
+* Allow importing arbitrary flake inputs or `configuration.nix` files to use as a system configuration, instead of configuring using the TUI

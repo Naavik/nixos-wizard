@@ -198,7 +198,6 @@ impl Page for SelectDrive {
 					};
 
 					installer.drive_config = Some(disk.clone());
-					installer.selected_drive = Some(row);
 					if installer.use_auto_drive_config {
 						Signal::Push(Box::new(SelectFilesystem::new(None)))
 					} else {
@@ -1121,7 +1120,7 @@ impl NewPartition {
 				let Some(ref device) = installer.drive_config else {
 					return Signal::Error(anyhow::anyhow!("No drive config available for new partition size input"));
 				};
-				match parse_sectors(input, device.sector_size(), device.size()) {
+				match parse_sectors(input, device.sector_size(), self.total_size) {
 					Some(size) => {
 						self.new_part_size = Some(size);
 						self.size_input.unfocus();
