@@ -1,7 +1,7 @@
 use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Constraint, Direction, Layout, Rect}, style::{Color, Modifier}, Frame};
 use serde_json::Value;
 
-use crate::{drives::{bytes_readable, disk_table, lsblk, parse_sectors, part_table, DiskItem, PartStatus, Partition}, installer::{Installer, Page, Signal}, styled_block, widget::{Button, CheckBox, ConfigWidget, HelpModal, InfoBox, LineEditor, TableWidget, WidgetBox}};
+use crate::{drives::{bytes_readable, disk_table, lsblk, parse_sectors, part_table, DiskItem, PartStatus, Partition}, installer::{Installer, Page, Signal}, styled_block, ui_back, ui_close, ui_down, ui_enter, ui_up, widget::{Button, CheckBox, ConfigWidget, HelpModal, InfoBox, LineEditor, TableWidget, WidgetBox}};
 
 const HIGHLIGHT: Option<(Color,Modifier)> = Some((Color::Yellow, Modifier::BOLD));
 
@@ -79,23 +79,23 @@ impl<'a> Page for Drives<'a> {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
 				Signal::Wait
 			}
-			KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
-			KeyCode::Up | KeyCode::Char('k') => {
+			ui_back!() => Signal::Pop,
+			ui_up!() => {
 				self.buttons.prev_child();
 				Signal::Wait
 			}
-			KeyCode::Down | KeyCode::Char('j') => {
+			ui_down!() => {
 				self.buttons.next_child();
 				Signal::Wait
 			}
-			KeyCode::Enter => {
+			ui_enter!() => {
 				let Some(idx) = self.buttons.selected_child() else {
 					return Signal::Wait;
 				};
@@ -175,23 +175,23 @@ impl Page for SelectDrive {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
 				Signal::Wait
 			}
-			KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
-			KeyCode::Up | KeyCode::Char('k') => {
+			ui_back!() => Signal::Pop,
+			ui_up!() => {
 				self.table.previous_row();
 				Signal::Wait
 			}
-			KeyCode::Down | KeyCode::Char('j') => {
+			ui_down!() => {
 				self.table.next_row();
 				Signal::Wait
 			}
-			KeyCode::Enter => {
+			ui_enter!() => {
 				if let Some(row) = self.table.selected_row() {
 					let Some(disk) = installer.drives.get(row) else {
 						return Signal::Error(anyhow::anyhow!("Failed to find drive info'"));
@@ -558,23 +558,23 @@ impl Page for SelectFilesystem {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
 				Signal::Wait
 			}
-			KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
-			KeyCode::Up | KeyCode::Char('k') => {
+			ui_back!() => Signal::Pop,
+			ui_up!() => {
 				self.buttons.prev_child();
 				Signal::Wait
 			}
-			KeyCode::Down | KeyCode::Char('j') => {
+			ui_down!() => {
 				self.buttons.next_child();
 				Signal::Wait
 			}
-			KeyCode::Enter => {
+			ui_enter!() => {
 				let Some(idx) = self.buttons.selected_child() else {
 					return Signal::Wait;
 				};
@@ -713,7 +713,7 @@ impl Page for ManualPartition {
 				self.help_modal.toggle();
 				return Signal::Wait;
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				return Signal::Wait;
 			}
@@ -734,8 +734,8 @@ impl Page for ManualPartition {
 		}
 		if self.disk_config.is_focused() {
 			match event.code {
-				KeyCode::Char('q') | KeyCode::Esc => Signal::PopCount(2),
-				KeyCode::Up | KeyCode::Char('k') => {
+				ui_back!() => Signal::PopCount(2),
+				ui_up!() => {
 					if !self.disk_config.previous_row() {
 						self.disk_config.unfocus();
 						self.buttons.last_child();
@@ -743,7 +743,7 @@ impl Page for ManualPartition {
 					}
 					Signal::Wait
 				}
-				KeyCode::Down | KeyCode::Char('j') => {
+				ui_down!() => {
 					if !self.disk_config.next_row() {
 						self.disk_config.unfocus();
 						self.buttons.first_child();
@@ -782,8 +782,8 @@ impl Page for ManualPartition {
 			}
 		} else if self.buttons.is_focused() {
 			match event.code {
-				KeyCode::Char('q') | KeyCode::Esc => Signal::PopCount(2),
-				KeyCode::Up | KeyCode::Char('k') => {
+				ui_back!() => Signal::PopCount(2),
+				ui_up!() => {
 					if !self.buttons.prev_child() {
 						self.buttons.unfocus();
 						self.disk_config.last_row();
@@ -791,7 +791,7 @@ impl Page for ManualPartition {
 					}
 					Signal::Wait
 				}
-				KeyCode::Down | KeyCode::Char('j') => {
+				ui_down!() => {
 					if !self.buttons.next_child() {
 						self.buttons.unfocus();
 						self.disk_config.first_row();
@@ -955,19 +955,19 @@ impl Page for SuggestPartition {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
 				Signal::Wait
 			}
-			KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
-			KeyCode::Up | KeyCode::Char('k') => {
+			ui_back!() => Signal::Pop,
+			ui_up!() => {
 				self.buttons.prev_child();
 				Signal::Wait
 			}
-			KeyCode::Down | KeyCode::Char('j') => {
+			ui_down!() => {
 				self.buttons.next_child();
 				Signal::Wait
 			}
@@ -1169,12 +1169,12 @@ impl NewPartition {
 	}
 	pub fn handle_input_fs_select(&mut self, _installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
-			KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
-			KeyCode::Up | KeyCode::Char('k') => {
+			ui_back!() => Signal::Pop,
+			ui_up!() => {
 				self.fs_buttons.prev_child();
 				Signal::Wait
 			}
-			KeyCode::Down | KeyCode::Char('j') => {
+			ui_down!() => {
 				self.fs_buttons.next_child();
 				Signal::Wait
 			}
@@ -1484,16 +1484,16 @@ impl Page for AlterPartition {
 	}
 	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
 		match event.code {
-			KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
-			KeyCode::Up | KeyCode::Char('k') => {
+			ui_back!() => Signal::Pop,
+			ui_up!() => {
 				self.buttons.prev_child();
 				Signal::Wait
 			}
-			KeyCode::Down | KeyCode::Char('j') => {
+			ui_down!() => {
 				self.buttons.next_child();
 				Signal::Wait
 			}
-			KeyCode::Enter => {
+			ui_enter!() => {
 				if self.part_status == PartStatus::Delete {
 					return Signal::Pop
 				}

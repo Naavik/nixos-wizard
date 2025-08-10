@@ -12,6 +12,7 @@ pub mod installer;
 pub mod widget;
 pub mod drives;
 pub mod nixgen;
+pub mod macros;
 
 type LineStyle = Option<(Color, Modifier)>;
 pub fn styled_block<'a>(lines: Vec<Vec<(LineStyle, impl ToString)>>) -> Vec<Line<'a>> {
@@ -25,67 +26,6 @@ pub fn styled_block<'a>(lines: Vec<Vec<(LineStyle, impl ToString)>>) -> Vec<Line
 		}).collect::<Vec<_>>();
 		Line::from(spans)
 	}).collect()
-}
-
-#[macro_export]
-/// Sets up a new, unspawned std::process::Command
-macro_rules! command {
-    ($cmd:expr, $($arg:expr),* $(,)?) => {{
-			use std::process::Command;
-			let mut c = Command::new($cmd);
-				c.args(&[$($arg.to_string()),*]);
-				c
-		}};
-    ($cmd:expr) => {{
-			use std::process::Command;
-			let c = Command::new($cmd);
-				c
-		}};
-}
-
-#[macro_export]
-/// Creates a Nix attribute set using similar syntax.
-macro_rules! attrset {
-	{$($key:tt = $val:expr);+ ;} => {{
-		let mut parts = vec![];
-		$(
-			parts.push(format!("{} = {};", stringify!($key).trim_matches('"'), $val));
-		)*
-		format!("{{ {} }}", parts.join(" "))
-  }};
-}
-
-#[macro_export]
-/// Merges two attribute sets.
-macro_rules! merge_attrs {
-	($($set:expr),* $(,)?) => {{
-		let mut merged = String::new();
-		$(
-			if !$set.is_empty() {
-				if !$set.starts_with('{') || !$set.ends_with('}') {
-					panic!("attrset must be a valid attribute set, got: {:?}", $set);
-				}
-				let inner = $set
-				.strip_prefix('{')
-				.and_then(|s| s.strip_suffix('}'))
-				.unwrap_or("")
-				.trim();
-				merged.push_str(inner);
-			}
-		)*
-			format!("{{ {merged} }}")
-	}};
-}
-
-#[macro_export]
-/// Creates a Nix list
-macro_rules! list {
-	($($item:expr),* $(,)?) => {
-		{
-			let items = vec![$(format!("{}", $item)),*];
-			format!("[{}]", items.join(" "))
-		}
-	};
 }
 
 struct RawModeGuard;

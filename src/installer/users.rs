@@ -1,6 +1,6 @@
 use ratatui::{crossterm::event::KeyCode, layout::{Constraint, Direction, Layout}, text::Line};
 
-use crate::{installer::{Installer, Page, Signal, HIGHLIGHT}, styled_block, widget::{Button, ConfigWidget, HelpModal, InfoBox, LineEditor, StrList, TableWidget, WidgetBox}};
+use crate::{installer::{Installer, Page, Signal, HIGHLIGHT}, styled_block, ui_back, ui_close, ui_down, ui_enter, ui_up, widget::{Button, ConfigWidget, HelpModal, InfoBox, LineEditor, StrList, TableWidget, WidgetBox}};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct User {
@@ -44,9 +44,9 @@ impl UserAccounts {
 		user_table.focus();
 		let help_content = styled_block(vec![
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate user list")],
-			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Enter"), (None, " - Add new user or edit selected user")],
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Enter →, l"), (None, " - Add new user or edit selected user")],
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Tab"), (None, " - Switch between user list and buttons")],
-			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Esc"), (None, " - Return to main menu")],
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Return to main menu")],
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Create user accounts for your NixOS system.")],
@@ -114,7 +114,7 @@ impl Page for UserAccounts {
 				self.help_modal.toggle();
 				return Signal::Wait;
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				return Signal::Wait;
 			}
@@ -126,7 +126,7 @@ impl Page for UserAccounts {
 
 		if self.user_table.is_focused() {
 			match event.code {
-				KeyCode::Char('j') | KeyCode::Down => {
+				ui_down!() => {
 					if !self.user_table.next_row() {
 						self.user_table.unfocus();
 						self.buttons.focus();
@@ -134,7 +134,7 @@ impl Page for UserAccounts {
 					}
 					Signal::Wait
 				}
-				KeyCode::Char('k') | KeyCode::Up => {
+				ui_up!() => {
 					if !self.user_table.previous_row() {
 						self.user_table.unfocus();
 						self.buttons.focus();
@@ -142,7 +142,7 @@ impl Page for UserAccounts {
 					}
 					Signal::Wait
 				}
-				KeyCode::Enter => {
+				ui_enter!() => {
 					let Some(selected_user) = self.user_table.selected_row() else {
 						return Signal::Error(anyhow::anyhow!("No user selected"));
 					};
@@ -156,14 +156,14 @@ impl Page for UserAccounts {
 						Signal::Push(Box::new(AlterUser::new(selected_user - 1, groups)))
 					}
 				}
-				KeyCode::Esc | KeyCode::Char('q') => {
+				ui_back!()=> {
 					Signal::Pop
 				}
 				_ => Signal::Wait,
 			}
 		} else if self.buttons.is_focused() {
 			match event.code {
-				KeyCode::Char('j') | KeyCode::Down => {
+				ui_down!() => {
 					if !self.buttons.next_child() {
 						self.buttons.unfocus();
 						self.user_table.focus();
@@ -171,7 +171,7 @@ impl Page for UserAccounts {
 					}
 					Signal::Wait
 				}
-				KeyCode::Char('k') | KeyCode::Up => {
+				ui_up!() => {
 					if !self.buttons.prev_child() {
 						self.buttons.unfocus();
 						self.user_table.focus();
@@ -179,7 +179,7 @@ impl Page for UserAccounts {
 					}
 					Signal::Wait
 				}
-				KeyCode::Enter => {
+				ui_enter!() => {
 					match self.buttons.selected_child() {
 						Some(0) => {
 							// Back
@@ -188,7 +188,7 @@ impl Page for UserAccounts {
 						_ => Signal::Wait,
 					}
 				}
-				KeyCode::Esc | KeyCode::Char('q') => {
+				ui_back!() => {
 					Signal::Pop
 				}
 				_ => Signal::Wait,
@@ -202,9 +202,9 @@ impl Page for UserAccounts {
 	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate user list")],
-			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Enter"), (None, " - Add new user or edit selected user")],
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Enter, →, j"), (None, " - Add new user or edit selected user")],
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Tab"), (None, " - Switch between user list and buttons")],
-			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Esc"), (None, " - Return to main menu")],
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Return to main menu")],
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Create user accounts for your NixOS system.")],
@@ -323,7 +323,7 @@ impl Page for AddUser {
 				self.help_modal.toggle();
 				return Signal::Wait;
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				return Signal::Wait;
 			}
@@ -487,9 +487,9 @@ impl AlterUser {
 		buttons.focus();
 		let help_content = styled_block(vec![
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate menu options")],
-			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Enter"), (None, " - Select option")],
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Enter, →, l"), (None, " - Select option")],
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Tab"), (None, " - Navigate between fields")],
-			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Esc"), (None, " - Return to previous menu")],
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Return to previous menu")],
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Modify an existing user account. Choose from changing")],
@@ -632,13 +632,13 @@ impl AlterUser {
 	}
 	pub fn handle_input_main_menu(&mut self, installer: &mut super::Installer, event: ratatui::crossterm::event::KeyEvent) -> Signal {
 		match event.code {
-			KeyCode::Char('j') | KeyCode::Down => {
+			ui_down!() => {
 				if !self.buttons.next_child() {
 					self.buttons.first_child();
 				}
 				Signal::Wait
 			}
-			KeyCode::Char('k') | KeyCode::Up => {
+			ui_up!() => {
 				if !self.buttons.prev_child() {
 					self.buttons.last_child();
 				}
@@ -674,7 +674,7 @@ impl AlterUser {
 					_ => Signal::Wait,
 				}
 			}
-			KeyCode::Esc | KeyCode::Char('q') => {
+			ui_back!() => {
 				Signal::Pop
 			}
 			_ => Signal::Wait,
@@ -703,7 +703,7 @@ impl AlterUser {
 					Signal::Wait
 				}
 			}
-			KeyCode::Esc | KeyCode::Char('q') => {
+			ui_close!() => {
 				self.name_input.unfocus();
 				self.buttons.focus();
 				Signal::Wait
@@ -848,13 +848,13 @@ impl AlterUser {
 		} else if self.group_list.is_focused() {
 			// Enter deletes items from the list
 			match event.code {
-				KeyCode::Char('j') | KeyCode::Down => {
+				ui_down!() => {
 					if !self.group_list.next_item() {
 						self.group_list.first_item();
 					}
 					Signal::Wait
 				}
-				KeyCode::Char('k') | KeyCode::Up => {
+				ui_up!() => {
 					if !self.group_list.previous_item() {
 						self.group_list.last_item();
 					}
@@ -880,7 +880,7 @@ impl AlterUser {
 					self.group_name_input.focus();
 					Signal::Wait
 				}
-				KeyCode::Esc | KeyCode::Char('q') => {
+				ui_close!() => {
 					self.group_list.unfocus();
 					self.buttons.focus();
 					Signal::Wait
@@ -919,7 +919,7 @@ impl Page for AlterUser {
 				self.help_modal.toggle();
 				return Signal::Wait;
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				return Signal::Wait;
 			}
@@ -945,10 +945,10 @@ impl Page for AlterUser {
 
 	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
 		let help_content = styled_block(vec![
-			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate menu options")],
-			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Enter"), (None, " - Select option")],
+vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate menu options")],
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Enter, →, l"), (None, " - Select option")],
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Tab"), (None, " - Navigate between fields")],
-			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Esc"), (None, " - Return to previous menu")],
+			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Return to previous menu")],
 			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Modify an existing user account. Choose from changing")],

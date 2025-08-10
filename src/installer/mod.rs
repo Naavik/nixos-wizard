@@ -5,7 +5,7 @@ use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers}, layout::{Cons
 use serde_json::Value;
 use tempfile::NamedTempFile;
 
-use crate::{command, drives::{part_table, Disk, DiskItem}, installer::{systempkgs::NIXPKGS, users::User}, nixgen::highlight_nix, styled_block, widget::{Button, CheckBox, ConfigWidget, HelpModal, InfoBox, InstallSteps, LineEditor, ProgressBar, StrList, WidgetBox, WidgetBoxBuilder}};
+use crate::{command, drives::{part_table, Disk, DiskItem}, installer::{systempkgs::NIXPKGS, users::User}, nixgen::highlight_nix, styled_block, ui_back, ui_close, ui_down, ui_enter, ui_left, ui_right, ui_up, widget::{Button, CheckBox, ConfigWidget, HelpModal, InfoBox, InstallSteps, LineEditor, ProgressBar, StrList, WidgetBox, WidgetBoxBuilder}};
 
 const HIGHLIGHT: Option<(Color,Modifier)> = Some((Color::Yellow, Modifier::BOLD));
 
@@ -504,7 +504,7 @@ impl Page for Menu {
 				.constraints(
 					[
 					Constraint::Percentage(95), // Main content
-					Constraint::Percentage(5),  // Footer
+					Constraint::Percentage(5),	// Footer
 					]
 					.as_ref(),
 				)
@@ -560,7 +560,7 @@ impl Page for Menu {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
@@ -587,7 +587,7 @@ impl Page for Menu {
 				}
 				Signal::Wait
 			}
-			KeyCode::Up | KeyCode::Char('k') => {
+			ui_up!() => {
 				if self.menu_items.is_focused() {
 					if !self.menu_items.previous_item() {
 						self.menu_items.unfocus();
@@ -601,7 +601,7 @@ impl Page for Menu {
 					Signal::Wait
 				}
 			}
-			KeyCode::Down | KeyCode::Char('j') => {
+			ui_down!() => {
 				if self.menu_items.is_focused() {
 					if !self.menu_items.next_item() {
 						self.menu_items.unfocus();
@@ -615,29 +615,32 @@ impl Page for Menu {
 					Signal::Wait
 				}
 			}
-			KeyCode::Right | KeyCode::Char('l') => {
+			#[allow(unreachable_patterns)]
+			ui_enter!() if self.menu_items.is_focused() => {
+				let idx = self.menu_items.selected_idx;
+				// Get the actual page from supported_pages using the index
+				let supported_pages = MenuPages::supported_pages();
+				if let Some(page) = supported_pages.get(idx).copied() {
+					page.navigate(installer)
+				} else {
+					Signal::Wait
+				}
+			}
+      // Button row  
+			ui_right!() => {
 				if self.button_row.is_focused() {
 					self.button_row.next_child();
 				}
 				Signal::Wait
 			}
-			KeyCode::Left | KeyCode::Char('h') => {
+			ui_left!() => {
 				if self.button_row.is_focused() {
 					self.button_row.prev_child();
 				}
 				Signal::Wait
 			}
 			KeyCode::Enter => {
-				if self.menu_items.is_focused() {
-					let idx = self.menu_items.selected_idx;
-					// Get the actual page from supported_pages using the index
-					let supported_pages = MenuPages::supported_pages();
-					if let Some(page) = supported_pages.get(idx).copied() {
-						page.navigate(installer)
-					} else {
-						Signal::Wait
-					}
-				} else if self.button_row.is_focused() {
+				if self.button_row.is_focused() {
 					match self.button_row.selected_child() {
 						Some(0) => { // Done - Show config preview
 							if installer.has_all_requirements() {
@@ -646,18 +649,18 @@ impl Page for Menu {
 									Err(e) => Signal::Error(anyhow::anyhow!("Failed to generate configuration preview: {}", e)),
 								}
 							} else {
-								self.border_flash_timer = 6;
-								Signal::Wait
+							 self.border_flash_timer = 6;
+							 Signal::Wait
 							}
-						}
-						Some(1) => Signal::Quit,     // Abort
+						},
+						Some(1) => Signal::Quit, // Abort
 						_ => Signal::Wait,
 					}
-				} else {
+				} else {					
 					self.menu_items.focus();
 					Signal::Wait
 				}
-			}
+			},
 			_ => Signal::Wait,
 		}
 	}
@@ -809,14 +812,14 @@ impl Page for SourceFlake {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
 				Signal::Wait
 			}
-			KeyCode::Esc => Signal::Pop,
+			ui_back!() => Signal::Pop,
 			KeyCode::Enter => {
 				let flake_path = self.input.get_value().unwrap().as_str().unwrap().trim().to_string();
 				installer.flake_path = if flake_path.is_empty() { None } else { Some(flake_path) };
@@ -845,7 +848,7 @@ impl Language {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate language options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select language and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Select the language to be used for your system.")],
@@ -898,7 +901,7 @@ impl Page for Language {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate language options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select language and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Select the language to be used for your system.")],
@@ -912,15 +915,14 @@ impl Page for Language {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
 				Signal::Wait
 			}
-			KeyCode::Esc => Signal::Pop,
-			KeyCode::Char('q') => Signal::Pop,
+			ui_back!() => Signal::Pop,
 			KeyCode::Enter => {
 				installer.language = Some(self.langs.items[self.langs.selected_idx].clone());
 				Signal::Pop
@@ -969,7 +971,7 @@ impl KeyboardLayout {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate keyboard layout options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select keyboard layout and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Choose the keyboard layout that matches your physical keyboard.")],
@@ -1022,7 +1024,7 @@ impl Page for KeyboardLayout {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate keyboard layout options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select keyboard layout and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Choose the keyboard layout that matches your physical keyboard.")],
@@ -1036,15 +1038,14 @@ impl Page for KeyboardLayout {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
 				Signal::Wait
 			}
-			KeyCode::Esc => Signal::Pop,
-			KeyCode::Char('q') => Signal::Pop,
+			ui_back!() => Signal::Pop,
 			KeyCode::Enter => {
 				installer.keyboard_layout = Some(self.layouts.items[self.layouts.selected_idx].clone());
 				Signal::Pop
@@ -1090,7 +1091,7 @@ impl Locale {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate locale options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select locale and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Set the locale for your system, which determines")],
@@ -1144,7 +1145,7 @@ impl Page for Locale {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate locale options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select locale and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Set the locale for your system, which determines")],
@@ -1159,15 +1160,14 @@ impl Page for Locale {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
 				Signal::Wait
 			}
-			KeyCode::Esc => Signal::Pop,
-			KeyCode::Char('q') => Signal::Pop,
+			ui_back!() => Signal::Pop,
 			KeyCode::Enter => {
 				installer.locale = Some(self.locales.items[self.locales.selected_idx].clone());
 				Signal::Pop
@@ -1191,7 +1191,7 @@ impl EnableFlakes {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Toggle option or select Back")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Enable or disable experimental Nix flakes support.")],
@@ -1268,7 +1268,7 @@ impl Page for EnableFlakes {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Toggle option or select Back")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Enable or disable experimental Nix flakes support.")],
@@ -1283,20 +1283,19 @@ impl Page for EnableFlakes {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!()if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
 				Signal::Wait
 			}
-			KeyCode::Esc => Signal::Pop,
-			KeyCode::Char('q') => Signal::Pop,
-			KeyCode::Up | KeyCode::Char('k') => {
+			ui_back!() => Signal::Pop,
+			ui_up!() => {
 				self.buttons.prev_child();
 				Signal::Wait
 			}
-			KeyCode::Down | KeyCode::Char('j') => {
+			ui_down!() => {
 				self.buttons.next_child();
 				Signal::Wait
 			}
@@ -1337,7 +1336,7 @@ impl Bootloader {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate bootloader options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select bootloader and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Select the bootloader responsible for loading the operating system.")],
@@ -1391,7 +1390,7 @@ impl Page for Bootloader {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate bootloader options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select bootloader and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Select the bootloader responsible for loading the operating system.")],
@@ -1405,15 +1404,14 @@ impl Page for Bootloader {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
 				Signal::Wait
 			}
-			KeyCode::Esc => Signal::Pop,
-			KeyCode::Char('q') => Signal::Pop,
+			ui_back!() => Signal::Pop,
 			KeyCode::Enter => {
 				installer.bootloader = Some(self.loaders.items[self.loaders.selected_idx].clone());
 				Signal::Pop
@@ -1437,7 +1435,7 @@ impl Swap {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Toggle option or select Back")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Enable or disable swap space for virtual memory.")],
@@ -1515,7 +1513,7 @@ impl Page for Swap {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Toggle option or select Back")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Enable or disable swap space for virtual memory.")],
@@ -1530,20 +1528,19 @@ impl Page for Swap {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
 				Signal::Wait
 			}
-			KeyCode::Esc => Signal::Pop,
-			KeyCode::Char('q') => Signal::Pop,
-			KeyCode::Up | KeyCode::Char('k') => {
+			ui_back!() => Signal::Pop,
+			ui_up!() => {
 				self.buttons.prev_child();
 				Signal::Wait
 			}
-			KeyCode::Down | KeyCode::Char('j') => {
+			ui_down!() => {
 				self.buttons.next_child();
 				Signal::Wait
 			}
@@ -1675,7 +1672,7 @@ impl Page for Hostname {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
@@ -1842,7 +1839,7 @@ impl Page for RootPassword {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
@@ -1927,7 +1924,7 @@ impl Profile {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate profile options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select profile and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Select a predefined profile that matches your intended use case.")],
@@ -1983,7 +1980,7 @@ impl Page for Profile {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate profile options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select profile and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Select a predefined profile that matches your intended use case.")],
@@ -1997,15 +1994,14 @@ impl Page for Profile {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
 				Signal::Wait
 			}
-			KeyCode::Esc => Signal::Pop,
-			KeyCode::Char('q') => Signal::Pop,
+			ui_down!() => Signal::Pop,
 			KeyCode::Enter => {
 				installer.profile = Some(self.profiles.items[self.profiles.selected_idx].clone());
 				Signal::Pop
@@ -2036,7 +2032,7 @@ impl Greeter {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate greeter options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select greeter and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Select the display manager for the graphical login screen.")],
@@ -2090,7 +2086,7 @@ impl Page for Greeter {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate greeter options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select greeter and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Select the display manager for the graphical login screen.")],
@@ -2104,15 +2100,14 @@ impl Page for Greeter {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
 				Signal::Wait
 			}
-			KeyCode::Esc => Signal::Pop,
-			KeyCode::Char('q') => Signal::Pop,
+			ui_back!() => Signal::Pop,
 			KeyCode::Enter => {
 				installer.greeter = Some(self.greeters.items[self.greeters.selected_idx].clone());
 				Signal::Pop
@@ -2149,7 +2144,7 @@ impl DesktopEnvironment {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate desktop environment options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select desktop environment and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Select the desktop environment for your graphical interface.")],
@@ -2204,7 +2199,7 @@ impl Page for DesktopEnvironment {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate desktop environment options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select desktop environment and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Select the desktop environment for your graphical interface.")],
@@ -2218,15 +2213,14 @@ impl Page for DesktopEnvironment {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
 				Signal::Wait
 			}
-			KeyCode::Esc => Signal::Pop,
-			KeyCode::Char('q') => Signal::Pop,
+			ui_back!() => Signal::Pop,
 			KeyCode::Enter => {
 				installer.desktop_environment = Some(self.desktops.items[self.desktops.selected_idx].clone());
 				Signal::Pop
@@ -2258,7 +2252,7 @@ impl Kernels {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate kernel options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select kernel and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Select the Linux kernel to optimize system performance.")],
@@ -2313,7 +2307,7 @@ impl Page for Kernels {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate kernel options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select kernel and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Select the Linux kernel to optimize system performance.")],
@@ -2327,15 +2321,14 @@ impl Page for Kernels {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!()if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
 				Signal::Wait
 			}
-			KeyCode::Esc => Signal::Pop,
-			KeyCode::Char('q') => Signal::Pop,
+			ui_back!() => Signal::Pop,
 			KeyCode::Enter => {
 				// TODO: Implement multi selection for StrList
 				installer.kernels = Some(vec![self.kernels.items[self.kernels.selected_idx].clone()]);
@@ -2366,7 +2359,7 @@ impl Audio {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate audio backend options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select audio backend and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Select the audio management backend for sound devices.")],
@@ -2421,7 +2414,7 @@ impl Page for Audio {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate audio backend options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select audio backend and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Select the audio management backend for sound devices.")],
@@ -2435,15 +2428,14 @@ impl Page for Audio {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
 				Signal::Wait
 			}
-			KeyCode::Esc => Signal::Pop,
-			KeyCode::Char('q') => Signal::Pop,
+			ui_back!() => Signal::Pop,
 			KeyCode::Enter => {
 				installer.audio_backend = Some(self.backends.items[self.backends.selected_idx].clone());
 				Signal::Pop
@@ -2474,7 +2466,7 @@ impl Network {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate network backend options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select network backend and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Select the network management backend for connections.")],
@@ -2529,7 +2521,7 @@ impl Page for Network {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate network backend options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select network backend and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Select the network management backend for connections.")],
@@ -2543,15 +2535,14 @@ impl Page for Network {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
 				Signal::Wait
 			}
-			KeyCode::Esc => Signal::Pop,
-			KeyCode::Char('q') => Signal::Pop,
+			ui_back!() => Signal::Pop,
 			KeyCode::Enter => {
 				installer.network_backend = Some(self.backends.items[self.backends.selected_idx].clone());
 				Signal::Pop
@@ -2593,7 +2584,7 @@ impl Timezone {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate timezone options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select timezone and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Select the timezone that matches your physical location.")],
@@ -2648,7 +2639,7 @@ impl Page for Timezone {
 		let help_content = styled_block(vec![
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate timezone options")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select timezone and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q"), (None, " - Cancel and return to menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc, q, ←, h"), (None, " - Cancel and return to menu")],
 			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
 			vec![(None, "")],
 			vec![(None, "Select the timezone that matches your physical location.")],
@@ -2662,15 +2653,14 @@ impl Page for Timezone {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
 			_ if self.help_modal.visible => {
 				Signal::Wait
 			}
-			KeyCode::Esc => Signal::Pop,
-			KeyCode::Char('q') => Signal::Pop,
+			ui_back!() => Signal::Pop,
 			KeyCode::Enter => {
 				installer.timezone = Some(self.timezones.items[self.timezones.selected_idx].clone());
 				Signal::Pop
@@ -2754,9 +2744,9 @@ impl Page for ConfigPreview {
 			.direction(Direction::Vertical)
 			.margin(1)
 			.constraints([
-				Constraint::Length(3),  // Tab bar
-				Constraint::Min(0),     // Config content
-				Constraint::Length(3),  // Buttons
+				Constraint::Length(3),	// Tab bar
+				Constraint::Min(0),			// Config content
+				Constraint::Length(3),	// Buttons
 			])
 			.split(area);
 
@@ -2849,7 +2839,7 @@ impl Page for ConfigPreview {
 				self.help_modal.toggle();
 				Signal::Wait
 			}
-			KeyCode::Esc if self.help_modal.visible => {
+			ui_close!() if self.help_modal.visible => {
 				self.help_modal.hide();
 				Signal::Wait
 			}
@@ -2868,7 +2858,7 @@ impl Page for ConfigPreview {
 				self.scroll_position = 0;
 				Signal::Wait
 			}
-			KeyCode::Up | KeyCode::Char('k') => {
+			ui_up!() => {
 				if self.button_row.is_focused() {
 					if !self.button_row.prev_child() {
 						self.button_row.unfocus();
@@ -2878,7 +2868,7 @@ impl Page for ConfigPreview {
 				}
 				Signal::Wait
 			}
-			KeyCode::Down | KeyCode::Char('j') => {
+			ui_down!() => {
 				if self.button_row.is_focused() {
 					self.button_row.next_child();
 				} else {
@@ -2891,7 +2881,7 @@ impl Page for ConfigPreview {
 				}
 				Signal::Wait
 			}
-			KeyCode::Right | KeyCode::Char('l') => {
+			ui_right!() => {
 				if self.button_row.is_focused() {
 					if !self.button_row.next_child() {
 						self.button_row.first_child();
@@ -2906,7 +2896,7 @@ impl Page for ConfigPreview {
 
 				Signal::Wait
 			}
-			KeyCode::Left | KeyCode::Char('h') => {
+			ui_left!() => {
 				if self.button_row.is_focused() {
 					if !self.button_row.prev_child() {
 						self.button_row.last_child();
@@ -2938,7 +2928,7 @@ impl Page for ConfigPreview {
 				if self.button_row.is_focused() {
 					match self.button_row.selected_child() {
 						Some(0) => Signal::WriteCfg, // Save & Exit
-						Some(1) => Signal::Pop,      // Back
+						Some(1) => Signal::Pop,			 // Back
 						_ => Signal::Wait,
 					}
 				} else {
@@ -3136,9 +3126,9 @@ impl InstallComplete {
 }
 
 impl Default for InstallComplete {
-    fn default() -> Self {
-        Self::new()
-    }
+		fn default() -> Self {
+				Self::new()
+		}
 }
 
 impl Page for InstallComplete {

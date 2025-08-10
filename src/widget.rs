@@ -7,7 +7,7 @@ use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Alignment, Constraint, Layout, Rect}, style::{Color, Modifier, Style}, text::{Line, Span}, widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Table, TableState}, Frame};
 use serde_json::Value;
 
-use crate::installer::Signal;
+use crate::{installer::Signal, ui_down, ui_up};
 
 pub trait ConfigWidget {
 	fn render(&self, f: &mut Frame, area: Rect);
@@ -1654,10 +1654,10 @@ impl ConfigWidget for TableWidget {
 	fn handle_input(&mut self, key: KeyEvent) -> Signal {
 		if let Some(_idx) = self.selected_row.as_mut() {
 			match key.code {
-				KeyCode::Up | KeyCode::Char('k') => {
+				ui_up!() => {
 					self.next_row();
 				}
-				KeyCode::Down | KeyCode::Char('j') => {
+				ui_down!() => {
 					self.previous_row();
 				}
 				_ => {}
