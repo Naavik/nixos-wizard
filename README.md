@@ -1,6 +1,6 @@
 # nixos-wizard
 
-**A modern terminal-based NixOS installer with an interactive TUI, inspired by Arch Linux's `archinstall`.**
+**A modern terminal-based NixOS installer with an interactive TUI, inspired by Arch Linux's [`archinstall`](https://github.com/archlinux/archinstall).**
 
 `nixos-wizard` makes installing NixOS simple and user-friendly by guiding you step-by-step through partitioning, configuration, and installation — all from the terminal.
 
