@@ -20,8 +20,6 @@ use tempfile::NamedTempFile;
 
 use crate::{command, drives::{part_table, Disk, DiskItem}, installer::{systempkgs::NIXPKGS, users::User}, nixgen::highlight_nix, styled_block, ui_back, ui_close, ui_down, ui_enter, ui_left, ui_right, ui_up, widget::{Button, CheckBox, ConfigWidget, HelpModal, InfoBox, InstallSteps, LineEditor, ProgressBar, StrList, WidgetBox, WidgetBoxBuilder}};
 
-const HIGHLIGHT: Option<(Color,Modifier)> = Some((Color::Yellow, Modifier::BOLD));
-
 const HIGHLIGHT: Option<(Color, Modifier)> = Some((Color::Yellow, Modifier::BOLD));
 
 pub mod drivepages;
@@ -701,7 +699,7 @@ impl Page for Menu {
 					Signal::Wait
 				}
 			}
-      // Button row  
+      // Button row
 			ui_right!() => {
 				if self.button_row.is_focused() {
 					self.button_row.next_child();
@@ -731,7 +729,7 @@ impl Page for Menu {
 						Some(1) => Signal::Quit, // Abort
 						_ => Signal::Wait,
 					}
-				} else {					
+				} else {
 					self.menu_items.focus();
 					Signal::Wait
 				}
@@ -1171,6 +1169,18 @@ impl Page for KeyboardLayout {
 				installer.keyboard_layout = Some(self.layouts.items[self.layouts.selected_idx].clone());
 				Signal::Pop
 			}
+			ui_up!() => {
+				if !self.layouts.previous_item() {
+					self.layouts.last_item();
+				}
+				Signal::Wait
+			}
+			ui_down!() => {
+				if !self.layouts.next_item() {
+					self.layouts.first_item();
+				}
+				Signal::Wait
+			}
 			_ => self.layouts.handle_input(event)
 		}
 	}
@@ -1289,6 +1299,18 @@ impl Page for Locale {
 				Signal::Wait
 			}
 			ui_back!() => Signal::Pop,
+			ui_up!() => {
+				if !self.locales.previous_item() {
+					self.locales.last_item();
+				}
+				Signal::Wait
+			}
+			ui_down!() => {
+				if !self.locales.next_item() {
+					self.locales.first_item();
+				}
+				Signal::Wait
+			}
 			KeyCode::Enter => {
 				installer.locale = Some(self.locales.items[self.locales.selected_idx].clone());
 				Signal::Pop
@@ -1537,6 +1559,18 @@ impl Page for Bootloader {
 			KeyCode::Enter => {
 				installer.bootloader = Some(self.loaders.items[self.loaders.selected_idx].clone());
 				Signal::Pop
+			}
+			ui_up!() => {
+				if !self.loaders.previous_item() {
+					self.loaders.last_item();
+				}
+				Signal::Wait
+			}
+			ui_down!() => {
+				if !self.loaders.next_item() {
+					self.loaders.first_item();
+				}
+				Signal::Wait
 			}
 			_ => self.loaders.handle_input(event)
 		}
@@ -2430,6 +2464,18 @@ impl Page for DesktopEnvironment {
 				installer.desktop_environment = Some(self.desktops.items[self.desktops.selected_idx].clone());
 				Signal::Pop
 			}
+			ui_up!() => {
+				if !self.desktops.previous_item() {
+					self.desktops.last_item();
+				}
+				Signal::Wait
+			}
+			ui_down!() => {
+				if !self.desktops.next_item() {
+					self.desktops.first_item();
+				}
+				Signal::Wait
+			}
 			_ => self.desktops.handle_input(event)
 		}
 	}
@@ -2646,6 +2692,18 @@ impl Page for Audio {
 				installer.audio_backend = Some(self.backends.items[self.backends.selected_idx].clone());
 				Signal::Pop
 			}
+			ui_up!() => {
+				if !self.backends.previous_item() {
+					self.backends.last_item();
+				}
+				Signal::Wait
+			}
+			ui_down!() => {
+				if !self.backends.next_item() {
+					self.backends.first_item();
+				}
+				Signal::Wait
+			}
 			_ => self.backends.handle_input(event)
 		}
 	}
@@ -2752,6 +2810,18 @@ impl Page for Network {
 			KeyCode::Enter => {
 				installer.network_backend = Some(self.backends.items[self.backends.selected_idx].clone());
 				Signal::Pop
+			}
+			ui_up!() => {
+				if !self.backends.previous_item() {
+					self.backends.last_item();
+				}
+				Signal::Wait
+			}
+			ui_down!() => {
+				if !self.backends.next_item() {
+					self.backends.first_item();
+				}
+				Signal::Wait
 			}
 			_ => self.backends.handle_input(event)
 		}
@@ -2870,6 +2940,18 @@ impl Page for Timezone {
 			KeyCode::Enter => {
 				installer.timezone = Some(self.timezones.items[self.timezones.selected_idx].clone());
 				Signal::Pop
+			}
+			ui_up!() => {
+				if !self.timezones.previous_item() {
+					self.timezones.last_item();
+				}
+				Signal::Wait
+			}
+			ui_down!() => {
+				if !self.timezones.next_item() {
+					self.timezones.first_item();
+				}
+				Signal::Wait
 			}
 			_ => self.timezones.handle_input(event)
 		}

@@ -25,6 +25,7 @@ use crate::installer::{InstallProgress, Installer, Menu, Page, Signal, systempkg
 pub mod drives;
 pub mod installer;
 pub mod nixgen;
+pub mod widget;
 pub mod macros;
 
 type LineStyle = Option<(Color, Modifier)>;

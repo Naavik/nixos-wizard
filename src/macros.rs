@@ -1,4 +1,5 @@
 /// Sets up a new, unspawned std::process::Command
+#[macro_export]
 macro_rules! command {
 		($cmd:expr, $($arg:expr),* $(,)?) => {{
 			use std::process::Command;
@@ -60,13 +61,15 @@ macro_rules! list {
 
 // Ui
 #[macro_export]
+/// Escape or 'q'
 macro_rules! ui_close {
 	() => {
 		KeyCode::Esc | KeyCode::Char('q')
 	};
 }
- 
+
 #[macro_export]
+/// Escape or 'q' or Left or 'h'
 macro_rules! ui_back {
 	() => {
 		KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left | KeyCode::Char('h')
@@ -74,6 +77,7 @@ macro_rules! ui_back {
 }
 
 #[macro_export]
+/// Enter or Right or 'l'
 macro_rules! ui_enter {
 	() => {
 		KeyCode::Enter | KeyCode::Right | KeyCode::Char('l')
@@ -81,6 +85,7 @@ macro_rules! ui_enter {
 }
 
 #[macro_export]
+/// Down or 'j'
 macro_rules! ui_down {
 	() => {
 		KeyCode::Down | KeyCode::Char('j')
@@ -88,6 +93,7 @@ macro_rules! ui_down {
 }
 
 #[macro_export]
+/// Up or 'k'
 macro_rules! ui_up {
 	() => {
 		KeyCode::Up | KeyCode::Char('k')
@@ -95,12 +101,14 @@ macro_rules! ui_up {
 }
 
 #[macro_export]
+/// Left or 'h'
 macro_rules! ui_left {
 	() => {
 		KeyCode::Left | KeyCode::Char('h')
 	};
 }
 #[macro_export]
+/// Right or 'l'
 macro_rules! ui_right {
 	() => {
 		KeyCode::Right | KeyCode::Char('l')

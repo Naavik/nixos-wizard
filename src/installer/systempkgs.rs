@@ -7,9 +7,7 @@ use ratatui::{crossterm::event::KeyCode, layout::Constraint, text::Line};
 use serde_json::Value;
 
 use crate::{
-  installer::{Installer, Page, Signal},
-  styled_block,
-  widget::{ConfigWidget, HelpModal, LineEditor, OptimizedStrList, TableWidget},
+  installer::{Installer, Page, Signal}, styled_block, ui_down, ui_left, ui_up, widget::{ConfigWidget, HelpModal, LineEditor, OptimizedStrList, TableWidget}
 };
 
 use std::{
@@ -464,22 +462,22 @@ impl Page for SystemPackages {
       }
     } else if self.selected.is_focused() {
       match event.code {
-        KeyCode::Esc | KeyCode::Char('q') => Signal::Pop,
-        KeyCode::Left | KeyCode::Char('l') => {
+        ui_left!() => {
           self.focus_available();
           Signal::Wait
         }
-        KeyCode::Down | KeyCode::Char('j') => {
+        ui_down!() => {
           self.selected.next_item();
           Signal::Wait
         }
-        KeyCode::Up | KeyCode::Char('k') => {
+        ui_up!() => {
           if !self.selected.previous_item() {
             self.search_bar.focus();
             self.selected.unfocus();
           }
           Signal::Wait
         }
+        KeyCode::Esc | KeyCode::Char('q') => Signal::Pop,
         KeyCode::Tab => {
           self.focus_available();
           Signal::Wait
