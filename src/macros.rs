@@ -63,54 +63,54 @@ macro_rules! list {
 #[macro_export]
 /// Escape or 'q'
 macro_rules! ui_close {
-	() => {
-		KeyCode::Esc | KeyCode::Char('q')
-	};
+  () => {
+    KeyCode::Esc | KeyCode::Char('q')
+  };
 }
 
 #[macro_export]
 /// Escape or 'q' or Left or 'h'
 macro_rules! ui_back {
-	() => {
-		KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left | KeyCode::Char('h')
-	};
+  () => {
+    KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left | KeyCode::Char('h')
+  };
 }
 
 #[macro_export]
 /// Enter or Right or 'l'
 macro_rules! ui_enter {
-	() => {
-		KeyCode::Enter | KeyCode::Right | KeyCode::Char('l')
-	};
+  () => {
+    KeyCode::Enter | KeyCode::Right | KeyCode::Char('l')
+  };
 }
 
 #[macro_export]
 /// Down or 'j'
 macro_rules! ui_down {
-	() => {
-		KeyCode::Down | KeyCode::Char('j')
-	};
+  () => {
+    KeyCode::Down | KeyCode::Char('j')
+  };
 }
 
 #[macro_export]
 /// Up or 'k'
 macro_rules! ui_up {
-	() => {
-		KeyCode::Up | KeyCode::Char('k')
-	};
+  () => {
+    KeyCode::Up | KeyCode::Char('k')
+  };
 }
 
 #[macro_export]
 /// Left or 'h'
 macro_rules! ui_left {
-	() => {
-		KeyCode::Left | KeyCode::Char('h')
-	};
+  () => {
+    KeyCode::Left | KeyCode::Char('h')
+  };
 }
 #[macro_export]
 /// Right or 'l'
 macro_rules! ui_right {
-	() => {
-		KeyCode::Right | KeyCode::Char('l')
-	};
+  () => {
+    KeyCode::Right | KeyCode::Char('l')
+  };
 }

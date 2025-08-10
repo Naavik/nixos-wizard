@@ -7,7 +7,9 @@ use ratatui::{crossterm::event::KeyCode, layout::Constraint, text::Line};
 use serde_json::Value;
 
 use crate::{
-  installer::{Installer, Page, Signal}, styled_block, ui_down, ui_left, ui_up, widget::{ConfigWidget, HelpModal, LineEditor, OptimizedStrList, TableWidget}
+  installer::{Installer, Page, Signal},
+  styled_block, ui_down, ui_left, ui_up,
+  widget::{ConfigWidget, HelpModal, LineEditor, OptimizedStrList, TableWidget},
 };
 
 use std::{

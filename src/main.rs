@@ -24,9 +24,9 @@ use crate::installer::{InstallProgress, Installer, Menu, Page, Signal, systempkg
 
 pub mod drives;
 pub mod installer;
+pub mod macros;
 pub mod nixgen;
 pub mod widget;
-pub mod macros;
 
 type LineStyle = Option<(Color, Modifier)>;
 pub fn styled_block<'a>(lines: Vec<Vec<(LineStyle, impl ToString)>>) -> Vec<Line<'a>> {
