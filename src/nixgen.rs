@@ -3,6 +3,10 @@ use serde_json::Value;
 
 use crate::{attrset, merge_attrs, installer::users::User};
 
+/// Just wraps a string in quotes basically
+///
+/// Necessary for the generator to produce valid Nix strings
+/// and way better than writing 'format!("\"{string}\"")' everywhere
 pub fn nixstr(val: impl ToString) -> String {
 	let val = val.to_string();
 	format!("\"{val}\"")
@@ -122,7 +126,14 @@ impl NixWriter {
 			log::debug!("Value: {value}");
 			let parsed_config = match key.trim().to_lowercase().as_str() {
 				"audio_backend" => value.as_str().map(Self::parse_audio),
-				"bootloader" => value.as_str().map(Self::parse_bootloader),
+				"bootloader" => {
+					let res = value.as_str().map(Self::parse_bootloader);
+					match res {
+						Some(Ok(cfg)) => Some(cfg),
+						Some(Err(e)) => return Err(e),
+						None => None,
+					}
+				}
 				"desktop_environment" => value.as_str().map(Self::parse_desktop_environment),
 				"enable_flakes" => value.as_bool().filter(|&b| b).map(|_| Self::parse_enable_flakes()),
 				"greeter" => None,
@@ -240,21 +251,21 @@ impl NixWriter {
 
 		if let Some(part_type) = part_type {
 			Ok(attrset! {
-				"type" = nixstr(part_type);
-				"size" = nixstr(size);
-				"content" = attrset! {
-					"type" = nixstr("filesystem");
-					"format" = nixstr(format);
-					"mountpoint" = nixstr(mountpoint);
+				type = nixstr(part_type);
+				size = nixstr(size);
+				content = attrset! {
+					type = nixstr("filesystem");
+					format = nixstr(format);
+					mountpoint = nixstr(mountpoint);
 				};
 			})
 		} else {
 			Ok(attrset! {
-				"size" = nixstr(size);
-				"content" = attrset! {
-					"type" = nixstr("filesystem");
-					"format" = nixstr(format);
-					"mountpoint" = nixstr(mountpoint);
+				size = nixstr(size);
+				content = attrset! {
+					type = nixstr("filesystem");
+					format = nixstr(format);
+					mountpoint = nixstr(mountpoint);
 				};
 			})
 		}
@@ -424,7 +435,7 @@ impl NixWriter {
 			_ => String::new()
 		}
 	}
-	fn parse_bootloader(value: &str) -> String {
+	fn parse_bootloader(value: &str) -> anyhow::Result<String> {
 		let bootloader_attrs = match value.to_lowercase().as_str() {
 			"systemd-boot" => attrset! {
 				"systemd-boot.enable" = true;
@@ -433,17 +444,17 @@ impl NixWriter {
 
 			"grub" => attrset! {
 				grub = attrset! {
+					device = nixstr("nodev");
 					enable = true;
 					efiSupport = true;
-					device = nixstr("nodev");
 				};
 				"efi.canTouchEfiVariables" = true;
 			},
 			_ => String::new()
 		};
-		attrset! {
+		Ok(attrset! {
 			"boot.loader" = bootloader_attrs;
-		}
+		})
 	}
 
 	fn parse_users(&self, users_json: Value) -> anyhow::Result<String> {

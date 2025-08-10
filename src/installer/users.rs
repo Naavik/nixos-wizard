@@ -108,7 +108,7 @@ impl Page for UserAccounts {
 		self.help_modal.render(f, area);
 	}
 
-	fn handle_input(&mut self, _installer: &mut super::Installer, event: ratatui::crossterm::event::KeyEvent) -> Signal {
+	fn handle_input(&mut self, installer: &mut super::Installer, event: ratatui::crossterm::event::KeyEvent) -> Signal {
 		match event.code {
 			KeyCode::Char('?') => {
 				self.help_modal.toggle();
@@ -150,7 +150,10 @@ impl Page for UserAccounts {
 						// Add a new user
 						Signal::Push(Box::new(AddUser::new()))
 					} else {
-						Signal::Push(Box::new(AlterUser::new(selected_user - 1)))
+						let groups = installer.users.get(selected_user - 1)
+							.map(|u| u.groups.clone())
+							.unwrap_or_default();
+						Signal::Push(Box::new(AlterUser::new(selected_user - 1, groups)))
 					}
 				}
 				KeyCode::Esc | KeyCode::Char('q') => {
@@ -466,13 +469,14 @@ pub struct AlterUser {
 	pub pass_input: LineEditor,
 	pub pass_confirm: LineEditor,
 
+	/// Group Editor
 	pub group_name_input: LineEditor,
 	pub group_list: StrList,
 	help_modal: HelpModal<'static>,
 }
 
 impl AlterUser {
-	pub fn new(selected_user_idx: usize) -> Self {
+	pub fn new(selected_user_idx: usize, groups: Vec<String>) -> Self {
 		let buttons = vec![
 			Box::new(Button::new("Change username")) as Box<dyn ConfigWidget>,
 			Box::new(Button::new("Change password")) as Box<dyn ConfigWidget>,
@@ -499,7 +503,7 @@ impl AlterUser {
 			pass_input: LineEditor::new("New password", None::<&str>).secret(true),
 			pass_confirm: LineEditor::new("Confirm password", None::<&str>).secret(true),
 			group_name_input: LineEditor::new("Add group", None::<&str>),
-			group_list: StrList::new("Groups", vec![]),
+			group_list: StrList::new("Groups", groups),
 			help_modal,
 		}
 	}
@@ -828,8 +832,10 @@ impl AlterUser {
 					}
 				}
 				KeyCode::Tab => {
-					self.group_name_input.unfocus();
-					self.group_list.focus();
+					if !self.group_list.is_empty() {
+						self.group_name_input.unfocus();
+						self.group_list.focus();
+					}
 					Signal::Wait
 				}
 				KeyCode::Esc => {
@@ -861,6 +867,11 @@ impl AlterUser {
 							user.groups.retain(|g| g != selected);
 							self.group_list.set_items(user.groups.clone());
 						}
+					}
+
+					if self.group_list.is_empty() {
+						self.group_list.unfocus();
+						self.group_name_input.focus();
 					}
 					Signal::Wait
 				}

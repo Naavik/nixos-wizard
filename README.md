@@ -1,57 +1,93 @@
 # nixos-wizard
 
-A terminal-based installer for NixOS, similar to `archinstall` for Arch Linux. This project provides an interactive TUI (Terminal User Interface) to guide users through the NixOS installation process.
+**A modern terminal-based NixOS installer with an interactive TUI, inspired by Arch Linux's `archinstall`.**
 
-<img width="1916" height="1021" alt="nixos-wizard" src="https://github.com/user-attachments/assets/b1e11874-a72d-4e54-b2d8-e5a5f3325ac9" />
+`nixos-wizard` makes installing NixOS simple and user-friendly by guiding you step-by-step through partitioning, configuration, and installation — all from the terminal.
+
+![nixos-wizard screenshot](https://github.com/user-attachments/assets/b1e11874-a72d-4e54-b2d8-e5a5f3325ac9)
+
+---
+
+## Why nixos-wizard?
+
+NixOS is an amazing distribution, but manual installations from a terminal have always been a tedious and error prone process from day one. Many tools have surfaced that can reliably automate this process, but the options for manual installations are scarce.
+
+This project aims to help you get a bootable NixOS system as quickly and easily as possible by providing:
+
+* A **text-based UI** for an intuitive installation experience
+* Interactive **disk partitioning and formatting**
+* Guided **user account creation** and **package selection**
+* Automatic **NixOS configuration generation**
+* Real-time progress feedback during installation
+
+---
 
 ## Features
 
-- Interactive terminal-based interface using Ratatui
-- Guided disk partitioning and filesystem setup
-- User account creation and configuration
-- System package selection
-- NixOS configuration generation
-- Real-time installation progress tracking
+* **Terminal UI** built with [Ratatui](https://github.com/ratatui/ratatui)
+* Partition disks and create filesystems easily
+* Configure users, groups, and passwords
+* Select system packages to install
+* Automatically generate and apply hardware-specific NixOS configurations
+* Supports installation inside a NixOS live environment (recommended)
 
-## Requirements
+---
 
-- Must be run as root
-- Depends on several NixOS-specific commands, like `nixos-install` and `nixos-generate-config`. It is recommended to run this in the live environment provided by the flake. This live environment iso is also included in each release.
-- Terminal with proper color support
+## Requirements & Recommendations
 
-## Building
+* Must be run **as root**.
+* Designed to run inside the **NixOS live environment** built from the project’s flake or ISO.
+* Depends on NixOS-specific tools like `nixos-install` and `nixos-generate-config` being available.
+* A terminal emulator with proper color and Unicode support is recommended for best experience.
+* Running outside the live environment or missing dependencies may cause failures.
 
-This project uses Nix flakes for development and building:
+---
+
+## Getting Started
+
+### Development & Building
+
+Use Nix flakes to enter the dev shell or build the project:
 
 ```bash
-# Development shell
+# Enter development shell with all dependencies
 nix develop
 
-# Build the package
+# Build the release binary
 nix build
 ```
 
-## Running
+### Running nixos-wizard
+
+Run directly as root inside a NixOS live environment or your dev shell:
 
 ```bash
-# Run directly (as root)
 sudo ./target/release/nixos-wizard
+```
 
-# Or via Nix
+Alternatively, run the latest release from GitHub via Nix:
+
+```bash
 sudo nix run github:km-clay/nixos-wizard
 ```
 
-## ISO Integration
+---
 
-The project includes configuration for building custom NixOS installer ISOs that include nixos-wizard:
+## Building & Using the Installer ISO
+
+You can build a custom NixOS ISO image that includes `nixos-wizard` and all its dependencies pre-installed:
 
 ```bash
-# Build installer ISO
 nix build github:km-clay/nixos-wizard#nixosConfigurations.installerIso.config.system.build.isoImage
 ```
 
+Boot this ISO on your target machine to run the installer in a fully-supported live environment.
+
+---
+
 ## Roadmap
 
-* Implement support for creating btrfs subvolumes in the disk configuration menus
-* Implement support for configuring home-manager during user account setup
-* Allow importing arbitrary flake inputs or `configuration.nix` files to use as a system configuration, instead of configuring using the TUI
+* Add support for **btrfs subvolumes** and snapshots in disk configuration
+* Integrate **home-manager** configuration during user setup
+* Enable importing existing **flake inputs** or `configuration.nix` files for advanced customization
+* Improve hardware detection and configuration automation

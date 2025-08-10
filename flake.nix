@@ -29,6 +29,9 @@
           diskoPkg
           pkgs.bat
           pkgs.util-linux
+          pkgs.gawk
+          pkgs.gnugrep
+          pkgs.gnused
           pkgs.ntfs3g
         ]}
       '';

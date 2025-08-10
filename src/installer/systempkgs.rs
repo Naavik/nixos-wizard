@@ -332,6 +332,10 @@ impl Page for SystemPackages {
 					self.focus_available();
 					Signal::Wait
 				}
+				KeyCode::Down => {
+					self.focus_available();
+					Signal::Wait
+				}
 				KeyCode::Esc => {
 					self.search_bar.clear();
 					self.set_filter(None);
@@ -370,7 +374,10 @@ impl Page for SystemPackages {
 					Signal::Wait
 				}
 				KeyCode::Up | KeyCode::Char('k') => {
-					self.selected.previous_item();
+					if !self.selected.previous_item() {
+						self.search_bar.focus();
+						self.selected.unfocus();
+					}
 					Signal::Wait
 				}
 				KeyCode::Tab => {
@@ -407,7 +414,10 @@ impl Page for SystemPackages {
 					Signal::Wait
 				}
 				KeyCode::Up | KeyCode::Char('k') => {
-					self.available.previous_item();
+					if !self.selected.previous_item() {
+						self.search_bar.focus();
+						self.available.unfocus();
+					}
 					Signal::Wait
 				}
 				KeyCode::Tab => {
