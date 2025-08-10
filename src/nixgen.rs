@@ -119,10 +119,11 @@ impl NixWriter {
   }
   pub fn write_sys_config(&self, config: Value) -> anyhow::Result<String> {
     // initialize the attribute set
-    let mut cfg_attrs = String::from("{imports = [./hardware-configuration.nix];}");
     let Value::Object(ref cfg) = config else {
       return Err(anyhow::anyhow!("Config must be a JSON object"));
     };
+    let mut cfg_attrs = String::from("{}");
+    let mut install_home_manager = false;
     for (key, value) in cfg.iter() {
       log::debug!("Processing key: {key}");
       log::debug!("Value: {value}");
@@ -152,7 +153,11 @@ impl NixWriter {
         "system_pkgs" => value.as_array().map(Self::parse_system_packages),
         "timezone" => value.as_str().map(Self::parse_timezone),
         "use_swap" => value.as_bool().filter(|&b| b).map(|_| Self::parse_swap()),
-        "users" => Some(self.parse_users(value.clone())?),
+        "users" => {
+          let users: Vec<User> = serde_json::from_value(value.clone())?;
+          install_home_manager = users.iter().any(|user| user.home_manager_cfg.is_some());
+          Some(self.parse_users(users)?)
+        }
         _ => {
           log::warn!("Unknown configuration key: {key}");
           None
@@ -163,13 +168,27 @@ impl NixWriter {
         cfg_attrs = merge_attrs!(cfg_attrs, config);
       }
     }
+    let imports = if install_home_manager {
+      String::from(
+        r#"{imports = [ (import "${home-manager}/nixos") ./hardware-configuration.nix ];}"#,
+      )
+    } else {
+      String::from("{imports = [./hardware-configuration.nix];}")
+    };
 
     let state_version = attrset! {
       "system.stateVersion" = nixstr("25.11");
     };
-    cfg_attrs = merge_attrs!(cfg_attrs, state_version);
 
-    let raw = format!("{{ config, pkgs, ... }}: {cfg_attrs}");
+    cfg_attrs = merge_attrs!(imports, cfg_attrs, state_version);
+
+    let raw = if install_home_manager {
+      format!(
+        "{{ config, pkgs, ... }}: let home-manager = builtins.fetchTarball https://github.com/nix-community/home-manager/archive/release-25.05.tar.gz; in {cfg_attrs}"
+      )
+    } else {
+      format!("{{ config, pkgs, ... }}: {cfg_attrs}")
+    };
     fmt_nix(raw)
   }
   /*
@@ -469,13 +488,14 @@ impl NixWriter {
     })
   }
 
-  fn parse_users(&self, users_json: Value) -> anyhow::Result<String> {
-    let users: Vec<User> = serde_json::from_value(users_json)?;
+  fn parse_users(&self, users: Vec<User>) -> anyhow::Result<String> {
     if users.is_empty() {
       return Ok(String::from("{}"));
     }
 
     let mut user_configs = Vec::new();
+    let mut hm_configs = Vec::new();
+
     for user in users {
       let groups_list = if user.groups.is_empty() {
         "[]".to_string()
@@ -489,10 +509,35 @@ impl NixWriter {
         "hashedPassword" = nixstr(user.password_hash);
       };
       user_configs.push(format!("\"{}\" = {};", user.username, user_config));
+
+      if let Some(cfg) = user.home_manager_cfg {
+        let pkg_list = if cfg.packages.is_empty() {
+          "with pkgs; []".to_string()
+        } else {
+          let pkgs: Vec<String> = cfg.packages.iter().map(|s| s.to_string()).collect();
+          format!("with pkgs; [ {} ]", pkgs.join(" "))
+        };
+        let hm_config_body = attrset! {
+          home = attrset! {
+            packages = pkg_list;
+            stateVersion = nixstr("24.05");
+          };
+        };
+        let hm_config_expr = format!("{{pkgs, ...}}: {hm_config_body}");
+        let user_hm_config = format!("\"{}\" = {};", user.username, hm_config_expr);
+        hm_configs.push(user_hm_config);
+      }
     }
 
-    let users = attrset! {
-      "users.users" = format!("{{ {} }}", user_configs.join(" "));
+    let users = if !hm_configs.is_empty() {
+      attrset! {
+        "users.users" = format!("{{ {} }}", user_configs.join(" "));
+        "home-manager.users" = format!("{{ {} }}", hm_configs.join(" "));
+      }
+    } else {
+      attrset! {
+        "users.users" = format!("{{ {} }}", user_configs.join(" "));
+      }
     };
 
     log::debug!("Parsed users config: {users}");

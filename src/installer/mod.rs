@@ -21,7 +21,10 @@ use tempfile::NamedTempFile;
 use crate::{
   command,
   drives::{Disk, DiskItem, part_table},
-  installer::{systempkgs::NIXPKGS, users::User},
+  installer::{
+    systempkgs::{NIXPKGS, get_available_pkgs},
+    users::User,
+  },
   nixgen::highlight_nix,
   styled_block, ui_back, ui_close, ui_down, ui_enter, ui_left, ui_right, ui_up,
   widget::{
@@ -372,25 +375,7 @@ impl MenuPages {
       MenuPages::Kernels => Signal::Push(Box::new(Kernels::new())),
       MenuPages::SystemPackages => {
         // we actually need to go ask nixpkgs what packages it has now
-        let pkgs = {
-          let mut retries = 0;
-          loop {
-            let guard = NIXPKGS.read().unwrap();
-            if let Some(nixpkgs) = guard.as_ref() {
-              // Great, the package list has been populated
-              break nixpkgs.clone();
-            }
-            drop(guard); // Release lock before sleeping
-
-            if retries >= 5 {
-              // Last attempt to grab the package list before breaking
-              break fetch_nixpkgs().unwrap_or_default();
-            }
-
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            retries += 1;
-          }
-        };
+        let pkgs = get_available_pkgs().unwrap_or_default();
         Signal::Push(Box::new(SystemPackages::new(
           installer.system_pkgs.clone(),
           pkgs,
@@ -3995,6 +3980,11 @@ impl<'a> InstallProgress<'a> {
 			 vec![
 				command!("sh", "-c", "nixos-install --root /mnt"),
 			 ].into()),
+			(Line::from("Importing channels..."),
+			 vec![
+				command!("nixos-enter", "--", "nix-channel", "--add", "https://nixos.org/channels/nixos-unstable", "nixos"),
+				command!("nixos-enter", "--", "nix-channel", "--update")
+			].into()),
 			(Line::from("Finalizing installation..."),
 			 vec![
 				command!("sleep", "1"),

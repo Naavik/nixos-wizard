@@ -5,7 +5,7 @@ use std::{
   os::fd::{FromRawFd, IntoRawFd, OwnedFd},
   process::{Child, ChildStderr, ChildStdout, Command, Stdio},
 };
-use throbber_widgets_tui::{BOX_DRAWING, BRAILLE_EIGHT, ThrobberState};
+use throbber_widgets_tui::{BOX_DRAWING, ThrobberState};
 
 use ansi_to_tui::IntoText;
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
@@ -21,7 +21,143 @@ use ratatui::{
 };
 use serde_json::Value;
 
-use crate::{installer::Signal, ui_down, ui_up};
+use crate::{installer::Signal, ui_down, ui_left, ui_up};
+use std::collections::BTreeMap;
+
+#[derive(Debug, Clone)]
+pub struct PackageManager {
+  // Maps package name -> original index in nixpkgs list
+  available: BTreeMap<String, usize>,
+  selected: BTreeMap<String, usize>,
+  // Original ordering from nixpkgs for restoration
+  _original_order: Vec<String>,
+  // Cache for filtered results - maps package name to (original_index, fuzzy_score)
+  last_filter: Option<String>,
+  cached_filtered: BTreeMap<String, (usize, i64)>, // package_name -> (original_index, fuzzy_score)
+}
+
+impl PackageManager {
+  pub fn new(all_packages: Vec<String>, selected_packages: Vec<String>) -> Self {
+    let mut available = BTreeMap::new();
+    let mut selected = BTreeMap::new();
+
+    // Build the original order and available map
+    for (idx, package) in all_packages.iter().enumerate() {
+      available.insert(package.clone(), idx);
+    }
+
+    // Move pre-selected packages to selected map
+    for package in selected_packages {
+      if let Some(idx) = available.remove(&package) {
+        selected.insert(package, idx);
+      }
+    }
+
+    Self {
+      available,
+      selected,
+      _original_order: all_packages,
+      last_filter: None,
+      cached_filtered: BTreeMap::new(),
+    }
+  }
+
+  pub fn move_to_selected(&mut self, package: &str) -> bool {
+    if let Some(idx) = self.available.remove(package) {
+      self.selected.insert(package.to_string(), idx);
+      // Update cached filtered map by removing the package
+      self.cached_filtered.remove(package);
+      true
+    } else {
+      false
+    }
+  }
+
+  pub fn move_to_available(&mut self, package: &str) -> bool {
+    if let Some(idx) = self.selected.remove(package) {
+      self.available.insert(package.to_string(), idx);
+      // If we have a cached filter, check if this package matches and add it back
+      if let Some(ref filter) = self.last_filter {
+        use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
+        let matcher = SkimMatcherV2::default();
+        if let Some(score) = matcher.fuzzy_match(package, filter) {
+          // Add to cached filtered map with both original index and fuzzy score
+          self
+            .cached_filtered
+            .insert(package.to_string(), (idx, score));
+        }
+      }
+      true
+    } else {
+      false
+    }
+  }
+
+  pub fn get_available_packages(&self) -> Vec<String> {
+    self.available.keys().cloned().collect()
+  }
+
+  pub fn get_selected_packages(&self) -> Vec<String> {
+    self.selected.keys().cloned().collect()
+  }
+
+  pub fn get_available_filtered(&mut self, filter: &str) -> Vec<String> {
+    // Check if we can reuse cached results
+    if let Some(ref last_filter) = self.last_filter {
+      if last_filter == filter {
+        return self.get_sorted_by_score_from_cache();
+      }
+    }
+
+    // Need to recompute
+    use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
+    let matcher = SkimMatcherV2::default();
+
+    let mut filtered_map = BTreeMap::new();
+    for (package, &original_idx) in &self.available {
+      if let Some(score) = matcher.fuzzy_match(package, filter) {
+        filtered_map.insert(package.clone(), (original_idx, score));
+      }
+    }
+
+    // Cache the results
+    self.last_filter = Some(filter.to_string());
+    self.cached_filtered = filtered_map;
+
+    self.get_sorted_by_score_from_cache()
+  }
+
+  /// Get packages from cache sorted by fuzzy match score (best matches first)
+  fn get_sorted_by_score_from_cache(&self) -> Vec<String> {
+    let mut packages_with_score: Vec<_> = self
+      .cached_filtered
+      .iter()
+      .map(|(package, &(_, score))| (package.clone(), score))
+      .collect();
+    packages_with_score.sort_by_key(|(_, score)| -score); // Negative for descending order
+    packages_with_score
+      .into_iter()
+      .map(|(package, _)| package)
+      .collect()
+  }
+
+  pub fn contains_available(&self, package: &str) -> bool {
+    self.available.contains_key(package)
+  }
+
+  pub fn contains_selected(&self, package: &str) -> bool {
+    self.selected.contains_key(package)
+  }
+
+  /// Get current available list without recomputing if filter hasn't changed
+  pub fn get_current_available(&self) -> Vec<String> {
+    if self.last_filter.is_some() {
+      self.get_sorted_by_score_from_cache()
+    } else {
+      self.get_available_packages()
+    }
+  }
+}
 
 pub trait ConfigWidget {
   fn render(&self, f: &mut Frame, area: Rect);
@@ -160,10 +296,10 @@ impl WidgetBox {
     }
   }
   pub fn first_child(&mut self) {
-    self.focused_child = Some(0);
+    self.select_child(0);
   }
   pub fn last_child(&mut self) {
-    self.focused_child = Some(self.widgets.len().saturating_sub(1));
+    self.select_child(self.widgets.len().saturating_sub(1));
   }
   pub fn next_child(&mut self) -> bool {
     let idx = self.focused_child.unwrap_or(0);
@@ -1904,6 +2040,343 @@ impl<'a> HelpModal<'a> {
       .wrap(ratatui::widgets::Wrap { trim: true });
 
     f.render_widget(help_paragraph, popup_area);
+  }
+}
+
+pub struct PackagePicker {
+  pub focused: bool,
+  pub package_manager: PackageManager,
+  pub selected: OptimizedStrList,
+  pub available: OptimizedStrList,
+  pub search_bar: LineEditor,
+  help_modal: HelpModal<'static>,
+  pub current_filter: Option<String>,
+}
+
+impl PackagePicker {
+  pub fn new(
+    title_selected: &str,
+    title_available: &str,
+    selected_pkgs: Vec<String>,
+    available_pkgs: Vec<String>,
+  ) -> Self {
+    let package_manager = PackageManager::new(available_pkgs.clone(), selected_pkgs.clone());
+
+    let mut available =
+      OptimizedStrList::new(title_available, package_manager.get_available_packages());
+    available.focus();
+    let selected = OptimizedStrList::new(title_selected, package_manager.get_selected_packages());
+    let search_bar = LineEditor::new("Search", Some("Enter a package name..."));
+
+    let help_content = crate::styled_block(vec![
+      vec![
+        (
+          Some((
+            ratatui::style::Color::Yellow,
+            ratatui::style::Modifier::BOLD,
+          )),
+          "Tab",
+        ),
+        (None, " - Switch between lists and search"),
+      ],
+      vec![
+        (
+          Some((
+            ratatui::style::Color::Yellow,
+            ratatui::style::Modifier::BOLD,
+          )),
+          "↑/↓, j/k",
+        ),
+        (None, " - Navigate package lists"),
+      ],
+      vec![
+        (
+          Some((
+            ratatui::style::Color::Yellow,
+            ratatui::style::Modifier::BOLD,
+          )),
+          "Enter",
+        ),
+        (None, " - Add/remove package to/from selection"),
+      ],
+      vec![
+        (
+          Some((
+            ratatui::style::Color::Yellow,
+            ratatui::style::Modifier::BOLD,
+          )),
+          "/",
+        ),
+        (None, " - Focus search bar"),
+      ],
+      vec![
+        (
+          Some((
+            ratatui::style::Color::Yellow,
+            ratatui::style::Modifier::BOLD,
+          )),
+          "?",
+        ),
+        (None, " - Show this help"),
+      ],
+      vec![(None, "")],
+      vec![(
+        None,
+        "Search bar filters packages in real-time as you type.",
+      )],
+      vec![(None, "Filter persists when adding/removing packages.")],
+    ]);
+    let help_modal = HelpModal::new("Package Picker", help_content);
+
+    Self {
+      focused: false,
+      package_manager,
+      selected,
+      available,
+      search_bar,
+      help_modal,
+      current_filter: None,
+    }
+  }
+
+  pub fn get_selected_packages(&self) -> Vec<String> {
+    self.package_manager.get_selected_packages()
+  }
+
+  pub fn get_available_packages(&self) -> Vec<String> {
+    self.package_manager.get_available_packages()
+  }
+
+  fn focus_available(&mut self) {
+    self.available.focus();
+    self.search_bar.unfocus();
+    self.selected.unfocus();
+  }
+
+  fn focus_selected(&mut self) {
+    self.selected.focus();
+    self.search_bar.unfocus();
+    self.available.unfocus();
+  }
+
+  fn update_available_list(&mut self) {
+    let items = self.package_manager.get_current_available();
+    self.available.set_items(items);
+  }
+
+  fn set_filter(&mut self, filter: Option<String>) {
+    self.current_filter = filter.clone();
+    let items = if let Some(filter) = filter {
+      self.package_manager.get_available_filtered(&filter)
+    } else {
+      self.package_manager.get_available_packages()
+    };
+    self.available.set_items(items);
+  }
+}
+
+impl ConfigWidget for PackagePicker {
+  fn render(&self, f: &mut Frame, area: Rect) {
+    let hor_chunks = ratatui::layout::Layout::default()
+      .direction(ratatui::layout::Direction::Horizontal)
+      .constraints(
+        [
+          ratatui::layout::Constraint::Percentage(50),
+          ratatui::layout::Constraint::Percentage(50),
+        ]
+        .as_ref(),
+      )
+      .split(area);
+    let vert_chunks_left = ratatui::layout::Layout::default()
+      .direction(ratatui::layout::Direction::Vertical)
+      .constraints(
+        [
+          ratatui::layout::Constraint::Length(5),
+          ratatui::layout::Constraint::Min(0),
+        ]
+        .as_ref(),
+      )
+      .split(hor_chunks[0]);
+    let vert_chunks_right = ratatui::layout::Layout::default()
+      .direction(ratatui::layout::Direction::Vertical)
+      .constraints(
+        [
+          ratatui::layout::Constraint::Length(5),
+          ratatui::layout::Constraint::Min(0),
+        ]
+        .as_ref(),
+      )
+      .split(hor_chunks[1]);
+
+    self.selected.render(f, vert_chunks_left[1]);
+    self.search_bar.render(f, vert_chunks_right[0]);
+    self.available.render(f, vert_chunks_right[1]);
+    self.help_modal.render(f, area);
+  }
+
+  fn handle_input(&mut self, event: KeyEvent) -> Signal {
+    use ratatui::crossterm::event::KeyCode;
+
+    match event.code {
+      KeyCode::Char('?') => {
+        self.help_modal.toggle();
+        return Signal::Wait;
+      }
+      KeyCode::Esc if self.help_modal.visible => {
+        self.help_modal.hide();
+        return Signal::Wait;
+      }
+      _ if self.help_modal.visible => {
+        return Signal::Wait;
+      }
+      _ => {}
+    }
+
+    if event.code == KeyCode::Char('/') && !self.search_bar.is_focused() {
+      self.search_bar.focus();
+      self.search_bar.clear();
+      self.available.unfocus();
+      self.selected.unfocus();
+      return Signal::Wait;
+    }
+    if self.search_bar.is_focused() {
+      match event.code {
+        KeyCode::Enter | KeyCode::Tab => {
+          self.focus_available();
+          Signal::Wait
+        }
+        KeyCode::Down => {
+          self.focus_available();
+          Signal::Wait
+        }
+        KeyCode::Esc => {
+          self.search_bar.clear();
+          self.set_filter(None);
+          self.focus_available();
+          Signal::Wait
+        }
+        _ => {
+          let signal = self.search_bar.handle_input(event);
+          let filter_text = self
+            .search_bar
+            .get_value()
+            .and_then(|v| v.as_str().map(|s| s.to_string()));
+
+          if let Some(filter) = filter_text {
+            if !filter.is_empty() {
+              self.set_filter(Some(filter));
+            } else {
+              self.set_filter(None);
+            }
+          } else {
+            self.set_filter(None);
+          }
+          signal
+        }
+      }
+    } else if self.selected.is_focused() {
+      match event.code {
+        crate::ui_right!() => {
+          self.focus_available();
+          Signal::Wait
+        }
+        crate::ui_down!() => {
+          self.selected.next_item();
+          Signal::Wait
+        }
+        crate::ui_up!() => {
+          if !self.selected.previous_item() {
+            self.search_bar.focus();
+            self.selected.unfocus();
+          }
+          Signal::Wait
+        }
+        KeyCode::Tab => {
+          self.focus_available();
+          Signal::Wait
+        }
+        KeyCode::Enter => {
+          let selected_idx = self.selected.selected_idx;
+          if let Some(pkg) = self.selected.selected_item() {
+            if self.package_manager.move_to_available(pkg) {
+              self
+                .selected
+                .set_items(self.package_manager.get_selected_packages());
+              self.update_available_list();
+              self.selected.selected_idx = selected_idx.min(self.selected.len().saturating_sub(1));
+            }
+          }
+          Signal::Wait
+        }
+        _ => Signal::Wait,
+      }
+    } else if self.available.is_focused() {
+      match event.code {
+        ui_left!() => {
+          self.focus_selected();
+          Signal::Wait
+        }
+        ui_down!() => {
+          self.available.next_item();
+          Signal::Wait
+        }
+        ui_up!() => {
+          if !self.available.previous_item() {
+            self.search_bar.focus();
+            self.available.unfocus();
+          }
+          Signal::Wait
+        }
+        KeyCode::Tab => {
+          self.focus_selected();
+          Signal::Wait
+        }
+        KeyCode::Enter => {
+          let selected_idx = self.available.selected_idx;
+          if let Some(pkg) = self.available.selected_item() {
+            if self.package_manager.move_to_selected(pkg) {
+              self
+                .selected
+                .set_items(self.package_manager.get_selected_packages());
+              self.update_available_list();
+              self.available.selected_idx =
+                selected_idx.min(self.available.len().saturating_sub(1));
+            }
+          }
+          Signal::Wait
+        }
+        _ => Signal::Wait,
+      }
+    } else {
+      self.focus_available();
+      Signal::Wait
+    }
+  }
+
+  fn focus(&mut self) {
+    self.focused = true;
+    self.focus_available();
+  }
+
+  fn unfocus(&mut self) {
+    self.focused = false;
+    self.search_bar.unfocus();
+    self.available.unfocus();
+    self.selected.unfocus();
+  }
+
+  fn is_focused(&self) -> bool {
+    self.focused
+  }
+
+  fn get_value(&self) -> Option<Value> {
+    Some(Value::Array(
+      self
+        .get_selected_packages()
+        .into_iter()
+        .map(Value::String)
+        .collect(),
+    ))
   }
 }
 

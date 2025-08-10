@@ -16,8 +16,8 @@ This project aims to help you get a bootable NixOS system as quickly and easily 
 
 * A **text-based UI** for an intuitive installation experience
 * Interactive **disk partitioning and formatting** powered by [Disko](https://github.com/nix-community/disko)
-* Guided **user account creation** and **package selection**
-* Automatic **NixOS configuration generation**
+* Guided **user account creation**, **Home Manager configuration**, and **package selection**
+* Automatic **NixOS config generation**
 * Real-time progress feedback during installation
 
 ---
@@ -26,7 +26,7 @@ This project aims to help you get a bootable NixOS system as quickly and easily 
 
 * **Terminal UI** built with [Ratatui](https://github.com/ratatui/ratatui)
 * Partition disks and create filesystems easily
-* Configure users, groups, and passwords
+* Configure users, groups, passwords, and even setup Home Manager.
 * Select system packages to install
 * Automatically generate and apply hardware-specific NixOS configurations
 * Supports installation inside a NixOS live environment (recommended)
@@ -88,6 +88,5 @@ Boot this ISO on your target machine to run the installer in a fully-supported l
 ## Roadmap
 
 * Add support for **btrfs subvolumes** and snapshots in disk configuration
-* Integrate **home-manager** configuration during user setup
 * Enable importing existing **flake inputs** or `configuration.nix` files for advanced customization
 * Improve hardware detection and configuration automation

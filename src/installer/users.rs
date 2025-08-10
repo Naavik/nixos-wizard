@@ -5,9 +5,12 @@ use ratatui::{
 };
 
 use crate::{
-  installer::{HIGHLIGHT, Installer, Page, Signal},
+  installer::{HIGHLIGHT, Installer, Page, Signal, systempkgs::get_available_pkgs},
   styled_block, ui_back, ui_close, ui_down, ui_enter, ui_up,
-  widget::{Button, ConfigWidget, HelpModal, InfoBox, LineEditor, StrList, TableWidget, WidgetBox},
+  widget::{
+    Button, ConfigWidget, HelpModal, InfoBox, LineEditor, PackagePicker, StrList, TableWidget,
+    WidgetBox,
+  },
 };
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -15,17 +18,28 @@ pub struct User {
   pub username: String,
   pub password_hash: String,
   pub groups: Vec<String>,
-	pub home_manager_cfg: Option<HomeManagerCfg>
+  pub home_manager_cfg: Option<HomeManagerCfg>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HomeManagerCfg {
-	packages: Vec<String>
+  pub packages: Vec<String>,
 }
 
 impl User {
   pub fn as_table_row(&self) -> Vec<String> {
-    vec![self.username.clone(), self.groups.join(", ")]
+    let groups = if self.groups.is_empty() {
+      "<none>".to_string()
+    } else {
+      self.groups.join(", ")
+    };
+    let use_hm = if self.home_manager_cfg.is_some() {
+      "yes"
+    } else {
+      "no"
+    }
+    .to_string();
+    vec![self.username.clone(), groups, use_hm]
   }
 }
 
@@ -39,8 +53,16 @@ impl UserAccounts {
   pub fn new(users: Vec<User>) -> Self {
     let buttons = vec![Box::new(Button::new("Back")) as Box<dyn ConfigWidget>];
     let buttons = WidgetBox::button_menu(buttons);
-    let widths = vec![Constraint::Percentage(50), Constraint::Percentage(50)];
-    let headers = vec!["Username".to_string(), "Groups".to_string()];
+    let widths = vec![
+      Constraint::Percentage(33),
+      Constraint::Percentage(33),
+      Constraint::Percentage(33),
+    ];
+    let headers = vec![
+      "Username".to_string(),
+      "Groups".to_string(),
+      "Use Home Manager".to_string(),
+    ];
     let mut rows: Vec<Vec<String>> = users.into_iter().map(|u| u.as_table_row()).collect();
     rows.insert(0, vec!["Add a new user".into(), "".into()]);
     let mut user_table = TableWidget::new("Users", widths, headers, rows);
@@ -118,8 +140,16 @@ impl UserAccounts {
     }
     Some(Box::new(TableWidget::new(
       "Users",
-      vec![Constraint::Percentage(50), Constraint::Percentage(50)],
-      vec!["Username".to_string(), "Groups".to_string()],
+      vec![
+        Constraint::Percentage(33),
+        Constraint::Percentage(33),
+        Constraint::Percentage(33),
+      ],
+      vec![
+        "Username".to_string(),
+        "Groups".to_string(),
+        "Use Home Manager".to_string(),
+      ],
       users.into_iter().map(|u| u.as_table_row()).collect(),
     )))
   }
@@ -603,7 +633,7 @@ impl Page for AddUser {
                 username: self.username.clone().unwrap_or_default(),
                 password_hash: hashed,
                 groups: vec![],
-								home_manager_cfg: None
+                home_manager_cfg: None,
               });
               Signal::Pop
             } else {
@@ -731,7 +761,7 @@ impl AlterUser {
       Box::new(Button::new("Change username")) as Box<dyn ConfigWidget>,
       Box::new(Button::new("Change password")) as Box<dyn ConfigWidget>,
       Box::new(Button::new("Edit Groups")) as Box<dyn ConfigWidget>,
-			Box::new(Button::new("Configure Home Manager")) as Box<dyn ConfigWidget>,
+      Box::new(Button::new("Configure Home Manager")) as Box<dyn ConfigWidget>,
       Box::new(Button::new("Delete user")) as Box<dyn ConfigWidget>,
     ];
     let mut buttons = WidgetBox::button_menu(buttons);
@@ -851,8 +881,8 @@ impl AlterUser {
       .margin(2)
       .constraints(
         [
-          Constraint::Length(5),
-          Constraint::Length(5),
+          Constraint::Length(7),
+          Constraint::Length(7),
           Constraint::Min(0),
         ]
         .as_ref(),
@@ -972,7 +1002,14 @@ impl AlterUser {
             Signal::Wait
           }
           Some(3) => {
-						Signal::Push(Box::new(ConfigureHomeManager::new(self.selected_user)))
+            let existing_config = installer
+              .users
+              .get(self.selected_user)
+              .and_then(|user| user.home_manager_cfg.clone());
+            Signal::Push(Box::new(ConfigureHomeManager::new(
+              self.selected_user,
+              existing_config,
+            )))
           }
           Some(4) => {
             // Delete user
@@ -1342,75 +1379,249 @@ impl Page for AlterUser {
 }
 
 pub struct ConfigureHomeManager {
-	pub confirmed: bool,
-	pub confirm_buttons: WidgetBox,
-	pub configuration_options: WidgetBox,
-	pub selected_user: usize
+  pub confirmed: bool,
+  pub picking_pkgs: bool,
+  pub confirm_buttons: WidgetBox,
+  pub configuration_options: WidgetBox,
+  pub package_picker: PackagePicker,
+  pub selected_user: usize,
 }
 
 impl ConfigureHomeManager {
-	pub fn new(selected_user: usize, has_config: bool) -> Self {
-		let buttons = vec![
-			Box::new(Button::new("Yes")) as Box<dyn ConfigWidget>,
-			Box::new(Button::new("No")) as Box<dyn ConfigWidget>,
-		];
-		let config_options = vec![
-			Box::new(Button::new("Disable Home Manager")) as Box<dyn ConfigWidget>,
-			Box::new(Button::new("Configure User Packages")) as Box<dyn ConfigWidget>,
-		];
+  pub fn new(selected_user: usize, existing_config: Option<HomeManagerCfg>) -> Self {
+    let buttons = vec![
+      Box::new(Button::new("Yes")) as Box<dyn ConfigWidget>,
+      Box::new(Button::new("No")) as Box<dyn ConfigWidget>,
+    ];
+    let config_options = vec![
+      Box::new(Button::new("Configure User Packages")) as Box<dyn ConfigWidget>,
+      Box::new(Button::new("Disable Home Manager")) as Box<dyn ConfigWidget>,
+    ];
 
-		let mut confirm_buttons = WidgetBox::button_menu(buttons);
-		let mut configuration_options = WidgetBox::button_menu(config_options);
-		if has_config {
-			configuration_options.focus();
-		} else {
-			confirm_buttons.focus();
-		}
-		Self {
-			confirmed: false,
-			confirm_buttons,
-			configuration_options,
-			selected_user
-		}
-	}
+    let mut confirm_buttons = WidgetBox::button_menu(buttons);
+    let mut configuration_options = WidgetBox::button_menu(config_options);
+    if let Some(cfg) = existing_config {
+      configuration_options.focus();
+      let pkgs = get_available_pkgs().unwrap_or_default();
+      let selected_pkgs = cfg.packages.clone();
+      let package_picker = PackagePicker::new(
+        "Selected User Packages",
+        "Available Packages",
+        selected_pkgs,
+        pkgs,
+      );
+      Self {
+        confirmed: true,
+        picking_pkgs: false,
+        confirm_buttons,
+        configuration_options,
+        package_picker,
+        selected_user,
+      }
+    } else {
+      confirm_buttons.focus();
+      let pkgs = get_available_pkgs().unwrap_or_default();
+      let package_picker =
+        PackagePicker::new("Selected User Packages", "Available Packages", vec![], pkgs);
+      Self {
+        confirmed: false,
+        picking_pkgs: false,
+        confirm_buttons,
+        configuration_options,
+        package_picker,
+        selected_user,
+      }
+    }
+  }
 }
 
 impl Page for ConfigureHomeManager {
-	fn render(&mut self, installer: &mut Installer, f: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
-		if !confirmed {
-			let info_box = InfoBox::new("Configure Home Manager", styled_block(vec![
-				vec![(None, "Configure Home Manager for this user?")],
-				vec![
-				(None, "This will set up a "),
-				(HIGHLIGHT, "home manager "),
-				(None, "configuration for the user in the "),
-				(HIGHLIGHT, "configuration.nix "),
-				(None, "generated by this installer.")],
-			]));
-			let vert_chunks = Layout::default()
-				.direction(Direction::Vertical)
-				.constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
-				.split(area);
-			let hor_chunks = Layout::default()
-				.direction(Direction::Horizontal)
-				.margin(2)
-				.constraints(
-					[
-						Constraint::Percentage(40),
-						Constraint::Percentage(20),
-						Constraint::Percentage(40),
-					]
-					.as_ref(),
-				)
-				.split(vert_chunks[1]);
+  fn render(
+    &mut self,
+    installer: &mut Installer,
+    f: &mut ratatui::Frame,
+    area: ratatui::prelude::Rect,
+  ) {
+    if !self.confirmed {
+      let info_box = InfoBox::new(
+        "Configure Home Manager",
+        styled_block(vec![
+          vec![(None, "Configure Home Manager for this user?")],
+          vec![
+            (None, "This will set up a "),
+            (HIGHLIGHT, "home manager "),
+            (None, "configuration for the user in the "),
+            (HIGHLIGHT, "configuration.nix "),
+            (None, "generated by this installer."),
+          ],
+          vec![
+            (HIGHLIGHT, "Home Manager"),
+            (
+              None,
+              " allows you to declaratively manage your user environment using ",
+            ),
+            (HIGHLIGHT, "Nix"),
+            (None, "."),
+          ],
+        ]),
+      );
+      let vert_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
+        .split(area);
+      let hor_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .margin(2)
+        .constraints(
+          [
+            Constraint::Percentage(40),
+            Constraint::Percentage(20),
+            Constraint::Percentage(40),
+          ]
+          .as_ref(),
+        )
+        .split(vert_chunks[1]);
 
-			info_box.render(f, vert_chunks[0]);
-			self.confirm_buttons.render(f, hor_chunks[1]);
-		} else {
-
-		}
-	}
-	fn handle_input(&mut self, installer: &mut Installer, event: ratatui::crossterm::event::KeyEvent) -> Signal {
-
-	}
+      info_box.render(f, vert_chunks[0]);
+      self.confirm_buttons.render(f, hor_chunks[1]);
+    } else if self.picking_pkgs {
+      self.package_picker.render(f, area);
+    } else {
+      let table = installer.users.get(self.selected_user).map(|user| {
+        let pkgs = user
+          .home_manager_cfg
+          .as_ref()
+          .map(|cfg| cfg.packages.clone())
+          .unwrap_or_default()
+          .into_iter()
+          .map(|pkg| vec![pkg])
+          .collect();
+        TableWidget::new(
+          "",
+          vec![Constraint::Percentage(100)],
+          vec!["User Packages".into()],
+          pkgs,
+        )
+      });
+      let vert_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+        .split(area);
+      let hor_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .margin(2)
+        .constraints(
+          [
+            Constraint::Percentage(40),
+            Constraint::Percentage(20),
+            Constraint::Percentage(40),
+          ]
+          .as_ref(),
+        )
+        .split(vert_chunks[0]);
+      self.configuration_options.render(f, hor_chunks[1]);
+      table.unwrap().render(f, vert_chunks[1]);
+    }
+  }
+  fn handle_input(
+    &mut self,
+    installer: &mut Installer,
+    event: ratatui::crossterm::event::KeyEvent,
+  ) -> Signal {
+    if !self.confirmed {
+      match event.code {
+        ui_down!() => {
+          if !self.confirm_buttons.next_child() {
+            self.confirm_buttons.first_child();
+          }
+          Signal::Wait
+        }
+        ui_up!() => {
+          if !self.confirm_buttons.prev_child() {
+            self.confirm_buttons.last_child();
+          }
+          Signal::Wait
+        }
+        KeyCode::Enter => {
+          match self.confirm_buttons.selected_child() {
+            Some(0) => {
+              // Yes
+              self.confirmed = true;
+              self.configuration_options.focus();
+              if self.selected_user < installer.users.len()
+                && installer.users[self.selected_user]
+                  .home_manager_cfg
+                  .is_none()
+              {
+                installer.users[self.selected_user].home_manager_cfg =
+                  Some(HomeManagerCfg { packages: vec![] });
+              }
+              Signal::Wait
+            }
+            Some(1) => {
+              // No
+              if self.selected_user < installer.users.len() {
+                installer.users[self.selected_user].home_manager_cfg = None;
+              }
+              Signal::Pop
+            }
+            _ => Signal::Wait,
+          }
+        }
+        _ => Signal::Wait,
+      }
+    } else if self.picking_pkgs {
+      match event.code {
+        ui_close!() => {
+          if self.package_picker.search_bar.is_focused() {
+            self.package_picker.handle_input(event)
+          } else {
+            let selected = self.package_picker.get_selected_packages();
+            if let Some(user) = installer.users.get_mut(self.selected_user) {
+              if let Some(cfg) = user.home_manager_cfg.as_mut() {
+                cfg.packages = selected;
+              }
+            }
+            self.picking_pkgs = false;
+            Signal::Wait
+          }
+        }
+        _ => self.package_picker.handle_input(event),
+      }
+    } else {
+      match event.code {
+        ui_down!() => {
+          if !self.configuration_options.next_child() {
+            self.configuration_options.first_child();
+          }
+          Signal::Wait
+        }
+        ui_up!() => {
+          if !self.configuration_options.prev_child() {
+            self.configuration_options.last_child();
+          }
+          Signal::Wait
+        }
+        ui_close!() => Signal::Pop,
+        KeyCode::Enter => {
+          match self.configuration_options.selected_child() {
+            Some(0) => {
+              // Configure User Packages
+              self.picking_pkgs = true;
+              Signal::Wait
+            }
+            Some(1) => {
+              // Disable Home Manager
+              if self.selected_user < installer.users.len() {
+                installer.users[self.selected_user].home_manager_cfg = None;
+              }
+              Signal::Pop
+            }
+            _ => Signal::Wait,
+          }
+        }
+        _ => Signal::Wait,
+      }
+    }
+  }
 }
