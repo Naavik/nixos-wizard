@@ -36,7 +36,7 @@ This project aims to help you get a bootable NixOS system as quickly and easily 
 ## Requirements & Recommendations
 
 * Must be run **as root**.
-* Designed to run inside the **NixOS live environment** built from the project’s flake or ISO.
+* Designed to run inside the **NixOS live environment** built from the project’s flake or ISO. A prebuilt installer ISO is included with each release.
 * Depends on NixOS-specific tools like `nixos-install` and `nixos-generate-config` being available.
 * A terminal emulator with proper color and Unicode support is recommended for best experience.
 * Running the binary directly may cause failures if necessary commands are not found in your environment. Ideally, this should be run using the flake output which wraps the program with all of the commands it needs for the installation process.
