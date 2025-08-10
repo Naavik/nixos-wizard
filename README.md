@@ -15,7 +15,7 @@ NixOS is an amazing distribution, but manual installations from a terminal have 
 This project aims to help you get a bootable NixOS system as quickly and easily as possible by providing:
 
 * A **text-based UI** for an intuitive installation experience
-* Interactive **disk partitioning and formatting**
+* Interactive **disk partitioning and formatting** powered by [Disko](https://github.com/nix-community/disko)
 * Guided **user account creation** and **package selection**
 * Automatic **NixOS configuration generation**
 * Real-time progress feedback during installation
