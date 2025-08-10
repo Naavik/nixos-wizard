@@ -275,7 +275,7 @@ impl NixWriter {
 			"systemd-networkd" => attrset! {
 				"systemd.network.enable" = true;
 			},
-			_ => panic!("Unsupported network backend: {value}"),
+			_ => String::new()
 		}
 	}
 	pub fn parse_locale(value: &str) -> String {
@@ -287,6 +287,7 @@ impl NixWriter {
 		let value = if value == "us(qwerty)" { "us" } else { value };
 		attrset! {
 			"services.xserver.xkb.layout" = nixstr(value);
+			"console.keyMap" = nixstr(value);
 		}
 	}
 
@@ -344,7 +345,7 @@ impl NixWriter {
 			"lightdm" => attrset! {
 				"services.xserver.displayManager.lightdm.enable" = true;
 			},
-			_ => panic!("Unsupported greeter: {value}"),
+			_ => String::new()
 		}
 	}
 	fn parse_desktop_environment(value: &str) -> String {
@@ -384,7 +385,7 @@ impl NixWriter {
 				"services.xserver.enable" = true;
 				"services.xserver.windowManager.i3.enable" = true;
 			},
-			_ => panic!("Unsupported desktop environment: {value}"),
+			_ => String::new()
 		}
 	}
 	fn parse_audio(value: &str) -> String {
@@ -395,7 +396,7 @@ impl NixWriter {
 			"pipewire" => attrset! {
 				"services.pipewire.enable" = true;
 			},
-			_ => panic!("Unsupported audio backend: {value}"),
+			_ => String::new()
 		}
 	}
 	fn parse_bootloader(value: &str) -> String {
@@ -413,7 +414,7 @@ impl NixWriter {
 				};
 				"efi.canTouchEfiVariables" = true;
 			},
-			_ => panic!("Unsupported bootloader: {value}"),
+			_ => String::new()
 		};
 		attrset! {
 			"boot.loader" = bootloader_attrs;
