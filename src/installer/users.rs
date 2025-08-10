@@ -1,27 +1,29 @@
-use ratatui::{crossterm::event::KeyCode, layout::{Constraint, Direction, Layout}, text::Line};
+
+use ratatui::{
+  crossterm::event::KeyCode,
+  layout::{Constraint, Direction, Layout},
+  text::Line,
+};
 
 use crate::{installer::{Installer, Page, Signal, HIGHLIGHT}, styled_block, ui_back, ui_close, ui_down, ui_enter, ui_up, widget::{Button, ConfigWidget, HelpModal, InfoBox, LineEditor, StrList, TableWidget, WidgetBox}};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct User {
-	pub username: String,
-	pub password_hash: String,
-	pub groups: Vec<String>,
+  pub username: String,
+  pub password_hash: String,
+  pub groups: Vec<String>,
 }
 
 impl User {
-	pub fn as_table_row(&self) -> Vec<String> {
-		vec![
-			self.username.clone(),
-			self.groups.join(", ")
-		]
-	}
+  pub fn as_table_row(&self) -> Vec<String> {
+    vec![self.username.clone(), self.groups.join(", ")]
+  }
 }
 
 pub struct UserAccounts {
-	pub user_table: TableWidget,
-	pub buttons: WidgetBox,
-	help_modal: HelpModal<'static>,
+  pub user_table: TableWidget,
+  pub buttons: WidgetBox,
+  help_modal: HelpModal<'static>,
 }
 
 impl UserAccounts {
@@ -216,76 +218,139 @@ impl Page for UserAccounts {
 }
 
 pub struct AddUser {
-	name_input: LineEditor,
-	pass_input: LineEditor,
-	pass_confirm: LineEditor,
-	help_modal: HelpModal<'static>,
+  name_input: LineEditor,
+  pass_input: LineEditor,
+  pass_confirm: LineEditor,
+  help_modal: HelpModal<'static>,
 
-	username: Option<String>,
+  username: Option<String>,
 }
 
 impl AddUser {
-	pub fn new() -> Self {
-		let mut name_input = LineEditor::new("Username", None::<&str>);
-		name_input.focus();
-		let help_content = styled_block(vec![
-			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Tab"), (None, " - Move to next field")],
-			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Shift+Tab"), (None, " - Move to previous field")],
-			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Enter"), (None, " - Create user account")],
-			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Esc"), (None, " - Cancel and return")],
-			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "←/→"), (None, " - Move cursor in text field")],
-			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "Home/End"), (None, " - Jump to field beginning/end")],
-			vec![(Some((ratatui::style::Color::Yellow, ratatui::style::Modifier::BOLD)), "?"), (None, " - Show this help")],
-			vec![(None, "")],
-			vec![(None, "Create a new user account for your NixOS system.")],
-			vec![(None, "Enter username, password, and confirm password.")],
-			vec![(None, "Passwords are hidden during entry for security.")],
-		]);
-		let help_modal = HelpModal::new("Add User", help_content);
-		Self {
-			name_input,
-			pass_input: LineEditor::new("Password", None::<&str>).secret(true),
-			pass_confirm: LineEditor::new("Confirm Password", None::<&str>).secret(true),
-			help_modal,
-			username: None,
-		}
-	}
-	pub fn cycle_forward(&mut self) {
-		// Tab was pressed
-		if self.name_input.is_focused() {
-			self.name_input.unfocus();
-			self.pass_input.focus();
-		} else if self.pass_input.is_focused() {
-			self.pass_input.unfocus();
-			self.pass_confirm.focus();
-		} else if self.pass_confirm.is_focused() {
-			self.pass_confirm.unfocus();
-			self.name_input.focus();
-		} else {
-			self.name_input.focus();
-		}
-	}
-	pub fn cycle_backward(&mut self) {
-		// Shift+Tab was pressed
-		if self.name_input.is_focused() {
-			self.name_input.unfocus();
-			self.pass_confirm.focus();
-		} else if self.pass_input.is_focused() {
-			self.pass_input.unfocus();
-			self.name_input.focus();
-		} else if self.pass_confirm.is_focused() {
-			self.pass_confirm.unfocus();
-			self.pass_input.focus();
-		} else {
-			self.name_input.focus();
-		}
-	}
+  pub fn new() -> Self {
+    let mut name_input = LineEditor::new("Username", None::<&str>);
+    name_input.focus();
+    let help_content = styled_block(vec![
+      vec![
+        (
+          Some((
+            ratatui::style::Color::Yellow,
+            ratatui::style::Modifier::BOLD,
+          )),
+          "Tab",
+        ),
+        (None, " - Move to next field"),
+      ],
+      vec![
+        (
+          Some((
+            ratatui::style::Color::Yellow,
+            ratatui::style::Modifier::BOLD,
+          )),
+          "Shift+Tab",
+        ),
+        (None, " - Move to previous field"),
+      ],
+      vec![
+        (
+          Some((
+            ratatui::style::Color::Yellow,
+            ratatui::style::Modifier::BOLD,
+          )),
+          "Enter",
+        ),
+        (None, " - Create user account"),
+      ],
+      vec![
+        (
+          Some((
+            ratatui::style::Color::Yellow,
+            ratatui::style::Modifier::BOLD,
+          )),
+          "Esc",
+        ),
+        (None, " - Cancel and return"),
+      ],
+      vec![
+        (
+          Some((
+            ratatui::style::Color::Yellow,
+            ratatui::style::Modifier::BOLD,
+          )),
+          "←/→",
+        ),
+        (None, " - Move cursor in text field"),
+      ],
+      vec![
+        (
+          Some((
+            ratatui::style::Color::Yellow,
+            ratatui::style::Modifier::BOLD,
+          )),
+          "Home/End",
+        ),
+        (None, " - Jump to field beginning/end"),
+      ],
+      vec![
+        (
+          Some((
+            ratatui::style::Color::Yellow,
+            ratatui::style::Modifier::BOLD,
+          )),
+          "?",
+        ),
+        (None, " - Show this help"),
+      ],
+      vec![(None, "")],
+      vec![(None, "Create a new user account for your NixOS system.")],
+      vec![(None, "Enter username, password, and confirm password.")],
+      vec![(None, "Passwords are hidden during entry for security.")],
+    ]);
+    let help_modal = HelpModal::new("Add User", help_content);
+    Self {
+      name_input,
+      pass_input: LineEditor::new("Password", None::<&str>).secret(true),
+      pass_confirm: LineEditor::new("Confirm Password", None::<&str>).secret(true),
+      help_modal,
+      username: None,
+    }
+  }
+  pub fn cycle_forward(&mut self) {
+    // Tab was pressed
+    if self.name_input.is_focused() {
+      self.name_input.unfocus();
+      self.pass_input.focus();
+    } else if self.pass_input.is_focused() {
+      self.pass_input.unfocus();
+      self.pass_confirm.focus();
+    } else if self.pass_confirm.is_focused() {
+      self.pass_confirm.unfocus();
+      self.name_input.focus();
+    } else {
+      self.name_input.focus();
+    }
+  }
+  pub fn cycle_backward(&mut self) {
+    // Shift+Tab was pressed
+    if self.name_input.is_focused() {
+      self.name_input.unfocus();
+      self.pass_confirm.focus();
+    } else if self.pass_input.is_focused() {
+      self.pass_input.unfocus();
+      self.name_input.focus();
+    } else if self.pass_confirm.is_focused() {
+      self.pass_confirm.unfocus();
+      self.pass_input.focus();
+    } else {
+      self.name_input.focus();
+    }
+  }
 }
 
 impl Default for AddUser {
-    fn default() -> Self {
-        Self::new()
-    }
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl Page for AddUser {
@@ -457,22 +522,22 @@ impl Page for AddUser {
 }
 
 pub struct AlterUser {
-	pub selected_user: usize,
+  pub selected_user: usize,
 
-	/// Main menu options
-	pub buttons: WidgetBox,
+  /// Main menu options
+  pub buttons: WidgetBox,
 
-	/// Name change
-	pub name_input: LineEditor,
+  /// Name change
+  pub name_input: LineEditor,
 
-	/// Password change
-	pub pass_input: LineEditor,
-	pub pass_confirm: LineEditor,
+  /// Password change
+  pub pass_input: LineEditor,
+  pub pass_confirm: LineEditor,
 
-	/// Group Editor
-	pub group_name_input: LineEditor,
-	pub group_list: StrList,
-	help_modal: HelpModal<'static>,
+  /// Group Editor
+  pub group_name_input: LineEditor,
+  pub group_list: StrList,
+  help_modal: HelpModal<'static>,
 }
 
 impl AlterUser {

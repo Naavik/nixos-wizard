@@ -1,7 +1,20 @@
-use std::{collections::VecDeque, fmt::{Debug, Display}, io::Write, process::{Command, Stdio}};
+use std::{
+  collections::VecDeque,
+  fmt::{Debug, Display},
+  io::Write,
+  process::{Command, Stdio},
+};
 
 use ansi_to_tui::IntoText;
-use ratatui::{crossterm::event::{KeyCode, KeyEvent, KeyModifiers}, layout::{Constraint, Direction, Layout, Rect}, prelude::Alignment, style::{Color, Modifier, Style}, text::Line, widgets::{Block, Borders, Paragraph, Wrap}, Frame};
+use ratatui::{
+  Frame,
+  crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
+  layout::{Constraint, Direction, Layout, Rect},
+  prelude::Alignment,
+  style::{Color, Modifier, Style},
+  text::Line,
+  widgets::{Block, Borders, Paragraph, Wrap},
+};
 use serde_json::Value;
 use tempfile::NamedTempFile;
 
@@ -9,477 +22,539 @@ use crate::{command, drives::{part_table, Disk, DiskItem}, installer::{systempkg
 
 const HIGHLIGHT: Option<(Color,Modifier)> = Some((Color::Yellow, Modifier::BOLD));
 
+const HIGHLIGHT: Option<(Color, Modifier)> = Some((Color::Yellow, Modifier::BOLD));
 
 pub mod drivepages;
-pub mod users;
 pub mod systempkgs;
-use users::UserAccounts;
+pub mod users;
 use drivepages::Drives;
-use systempkgs::{fetch_nixpkgs,SystemPackages};
+use systempkgs::{SystemPackages, fetch_nixpkgs};
+use users::UserAccounts;
 
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Installer {
-	pub flake_path: Option<String>,
-	pub language: Option<String>,
-	pub keyboard_layout: Option<String>,
-	pub locale: Option<String>,
-	pub enable_flakes: bool,
-	pub bootloader: Option<String>,
-	pub use_swap: bool,
-	pub root_passwd_hash: Option<String>, // Hashed
-	pub users: Vec<User>,
-	pub profile: Option<String>,
-	pub hostname: Option<String>,
-	pub kernels: Option<Vec<String>>,
-	pub audio_backend: Option<String>,
-	pub greeter: Option<String>,
-	pub system_pkgs: Vec<String>,
-	pub desktop_environment: Option<String>,
-	pub network_backend: Option<String>,
-	pub timezone: Option<String>,
+  pub flake_path: Option<String>,
+  pub language: Option<String>,
+  pub keyboard_layout: Option<String>,
+  pub locale: Option<String>,
+  pub enable_flakes: bool,
+  pub bootloader: Option<String>,
+  pub use_swap: bool,
+  pub root_passwd_hash: Option<String>, // Hashed
+  pub users: Vec<User>,
+  pub profile: Option<String>,
+  pub hostname: Option<String>,
+  pub kernels: Option<Vec<String>>,
+  pub audio_backend: Option<String>,
+  pub greeter: Option<String>,
+  pub system_pkgs: Vec<String>,
+  pub desktop_environment: Option<String>,
+  pub network_backend: Option<String>,
+  pub timezone: Option<String>,
 
+  pub drives: Vec<Disk>,
 
-	pub drives: Vec<Disk>,
+  pub drive_config: Option<Disk>,
+  pub use_auto_drive_config: bool,
 
-	pub drive_config: Option<Disk>,
-	pub use_auto_drive_config: bool,
+  pub drive_config_display: Option<Vec<DiskItem>>,
 
-
-	pub drive_config_display: Option<Vec<DiskItem>>,
-
-	/// Used as an escape hatch for inter-page communication
-	/// If you can't find a good way to pass a value from one page to another
-	/// Store it here, and use mem::take() on it in the receiving page
-	pub shared_register: Option<Value>,
+  /// Used as an escape hatch for inter-page communication
+  /// If you can't find a good way to pass a value from one page to another
+  /// Store it here, and use mem::take() on it in the receiving page
+  pub shared_register: Option<Value>,
 }
 
 impl Installer {
-	pub fn new() -> Self {
-		Self::default()
-	}
+  pub fn new() -> Self {
+    Self::default()
+  }
 
-	pub fn has_all_requirements(&self) -> bool {
-		self.root_passwd_hash.is_some()
-			&& !self.users.is_empty()
-			&& self.drive_config.is_some()
-			&& self.bootloader.is_some()
-	}
-	pub fn make_drive_config_display(&mut self) {
-		let Some(drive) = &self.drive_config else {
-			self.drive_config_display = None;
-			return;
-		};
-		self.drive_config_display = Some(drive.layout().to_vec())
-	}
+  pub fn has_all_requirements(&self) -> bool {
+    self.root_passwd_hash.is_some()
+      && !self.users.is_empty()
+      && self.drive_config.is_some()
+      && self.bootloader.is_some()
+  }
+  pub fn make_drive_config_display(&mut self) {
+    let Some(drive) = &self.drive_config else {
+      self.drive_config_display = None;
+      return;
+    };
+    self.drive_config_display = Some(drive.layout().to_vec())
+  }
 
-	pub fn to_json(&mut self) -> anyhow::Result<serde_json::Value> {
-		// Create the installer configuration JSON
-		// This is used as an intermediate representation before being serialized into Nix
-		let sys_config = serde_json::json!({
-			"hostname": self.hostname,
-			"language": self.language,
-			"keyboard_layout": self.keyboard_layout,
-			"locale": self.locale,
-			"timezone": self.timezone,
-			"enable_flakes": self.enable_flakes,
-			"bootloader": self.bootloader,
-			"use_swap": self.use_swap,
-			"profile": self.profile,
-			"root_passwd_hash": self.root_passwd_hash,
-			"audio_backend": self.audio_backend,
-			"greeter": self.greeter,
-			"desktop_environment": self.desktop_environment,
-			"network_backend": self.network_backend,
-			"system_pkgs": self.system_pkgs,
-			"users": self.users,
-			"kernels": self.kernels
-		});
+  pub fn to_json(&mut self) -> anyhow::Result<serde_json::Value> {
+    // Create the installer configuration JSON
+    // This is used as an intermediate representation before being serialized into
+    // Nix
+    let sys_config = serde_json::json!({
+      "hostname": self.hostname,
+      "language": self.language,
+      "keyboard_layout": self.keyboard_layout,
+      "locale": self.locale,
+      "timezone": self.timezone,
+      "enable_flakes": self.enable_flakes,
+      "bootloader": self.bootloader,
+      "use_swap": self.use_swap,
+      "profile": self.profile,
+      "root_passwd_hash": self.root_passwd_hash,
+      "audio_backend": self.audio_backend,
+      "greeter": self.greeter,
+      "desktop_environment": self.desktop_environment,
+      "network_backend": self.network_backend,
+      "system_pkgs": self.system_pkgs,
+      "users": self.users,
+      "kernels": self.kernels
+    });
 
-		// drive configuration if present
-		let disko_cfg = self.drive_config.as_mut().map(|d| d.as_disko_cfg());
+    // drive configuration if present
+    let disko_cfg = self.drive_config.as_mut().map(|d| d.as_disko_cfg());
 
-		// flake configuration if using flakes
-		let flake_path = self.flake_path.clone();
+    // flake configuration if using flakes
+    let flake_path = self.flake_path.clone();
 
-		let config = serde_json::json!({
-			"config": sys_config,
-			"disko": disko_cfg,
-			"flake_path": flake_path,
-		});
+    let config = serde_json::json!({
+      "config": sys_config,
+      "disko": disko_cfg,
+      "flake_path": flake_path,
+    });
 
-		Ok(config)
-	}
+    Ok(config)
+  }
 
-	pub fn from_json(json: serde_json::Value) -> anyhow::Result<Self> {
-		serde_json::from_value(json).map_err(|e| anyhow::anyhow!("Failed to deserialize installer config: {}", e))
-	}
+  pub fn from_json(json: serde_json::Value) -> anyhow::Result<Self> {
+    serde_json::from_value(json)
+      .map_err(|e| anyhow::anyhow!("Failed to deserialize installer config: {}", e))
+  }
 }
 
 pub enum Signal {
-	Wait,
-	Push(Box<dyn Page>),
-	Pop,
-	PopCount(usize),
-	Quit,
-	WriteCfg,
-	Unwind, // Pop until we get back to the menu
-	Error(anyhow::Error), // Propagates errors
+  Wait,
+  Push(Box<dyn Page>),
+  Pop,
+  PopCount(usize),
+  Quit,
+  WriteCfg,
+  Unwind,               // Pop until we get back to the menu
+  Error(anyhow::Error), // Propagates errors
 }
 
 impl Debug for Signal {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		match self {
-			Self::Wait => write!(f, "Signal::Wait"),
-			Self::Push(_) => write!(f, "Signal::Push"),
-			Self::Pop => write!(f, "Signal::Pop"),
-			Self::PopCount(n) => write!(f, "Signal::PopCount({n})"),
-			Self::Quit => write!(f, "Signal::Quit"),
-			Self::WriteCfg => write!(f, "Signal::WriteCfg"),
-			Self::Unwind => write!(f, "Signal::Unwind"),
-			Self::Error(err) => write!(f, "Signal::Error({err})"),
-		}
-	}
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Self::Wait => write!(f, "Signal::Wait"),
+      Self::Push(_) => write!(f, "Signal::Push"),
+      Self::Pop => write!(f, "Signal::Pop"),
+      Self::PopCount(n) => write!(f, "Signal::PopCount({n})"),
+      Self::Quit => write!(f, "Signal::Quit"),
+      Self::WriteCfg => write!(f, "Signal::WriteCfg"),
+      Self::Unwind => write!(f, "Signal::Unwind"),
+      Self::Error(err) => write!(f, "Signal::Error({err})"),
+    }
+  }
 }
 
 pub trait Page {
-	fn render(&mut self, installer: &mut Installer, f: &mut Frame, area: Rect);
-	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal;
-	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
-		("Help".to_string(), vec![Line::from("No help available for this page.")])
-	}
+  fn render(&mut self, installer: &mut Installer, f: &mut Frame, area: Rect);
+  fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal;
+  fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
+    (
+      "Help".to_string(),
+      vec![Line::from("No help available for this page.")],
+    )
+  }
 
-	/// This is used as an escape hatch for pages that need to send a signal without user input
-	/// This method is called on every redraw
-	fn signal(&self) -> Option<Signal> {
-		None
-	}
+  /// This is used as an escape hatch for pages that need to send a signal
+  /// without user input This method is called on every redraw
+  fn signal(&self) -> Option<Signal> {
+    None
+  }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuPages {
-	SourceFlake,
-	Language,
-	KeyboardLayout,
-	Locale,
-	EnableFlakes,
-	Drives,
-	Bootloader,
-	Swap,
-	Hostname,
-	RootPassword,
-	UserAccounts,
-	Profile,
-	Greeter,
-	DesktopEnvironment,
-	Audio,
-	Kernels,
-	SystemPackages,
-	Network,
-	Timezone,
+  SourceFlake,
+  Language,
+  KeyboardLayout,
+  Locale,
+  EnableFlakes,
+  Drives,
+  Bootloader,
+  Swap,
+  Hostname,
+  RootPassword,
+  UserAccounts,
+  Profile,
+  Greeter,
+  DesktopEnvironment,
+  Audio,
+  Kernels,
+  SystemPackages,
+  Network,
+  Timezone,
 }
 
 impl MenuPages {
-	pub fn all_pages() -> &'static [MenuPages] {
-		&[
-			MenuPages::SourceFlake,
-			MenuPages::Language,
-			MenuPages::KeyboardLayout,
-			MenuPages::Locale,
-			MenuPages::EnableFlakes,
-			MenuPages::Drives,
-			MenuPages::Bootloader,
-			MenuPages::Swap,
-			MenuPages::Hostname,
-			MenuPages::RootPassword,
-			MenuPages::UserAccounts,
-			MenuPages::Profile,
-			MenuPages::Greeter,
-			MenuPages::DesktopEnvironment,
-			MenuPages::Audio,
-			MenuPages::Kernels,
-			MenuPages::SystemPackages,
-			MenuPages::Network,
-			MenuPages::Timezone,
-		]
-	}
-	pub fn supported_pages() -> &'static [MenuPages] {
-		&[
-			MenuPages::KeyboardLayout,
-			MenuPages::Locale,
-			MenuPages::EnableFlakes,
-			MenuPages::Drives,
-			MenuPages::Bootloader,
-			MenuPages::Swap,
-			MenuPages::Hostname,
-			MenuPages::RootPassword,
-			MenuPages::UserAccounts,
-			MenuPages::DesktopEnvironment,
-			MenuPages::Audio,
-			MenuPages::SystemPackages,
-			MenuPages::Network,
-			MenuPages::Timezone,
-		]
-	}
+  pub fn all_pages() -> &'static [MenuPages] {
+    &[
+      MenuPages::SourceFlake,
+      MenuPages::Language,
+      MenuPages::KeyboardLayout,
+      MenuPages::Locale,
+      MenuPages::EnableFlakes,
+      MenuPages::Drives,
+      MenuPages::Bootloader,
+      MenuPages::Swap,
+      MenuPages::Hostname,
+      MenuPages::RootPassword,
+      MenuPages::UserAccounts,
+      MenuPages::Profile,
+      MenuPages::Greeter,
+      MenuPages::DesktopEnvironment,
+      MenuPages::Audio,
+      MenuPages::Kernels,
+      MenuPages::SystemPackages,
+      MenuPages::Network,
+      MenuPages::Timezone,
+    ]
+  }
+  pub fn supported_pages() -> &'static [MenuPages] {
+    &[
+      MenuPages::KeyboardLayout,
+      MenuPages::Locale,
+      MenuPages::EnableFlakes,
+      MenuPages::Drives,
+      MenuPages::Bootloader,
+      MenuPages::Swap,
+      MenuPages::Hostname,
+      MenuPages::RootPassword,
+      MenuPages::UserAccounts,
+      MenuPages::DesktopEnvironment,
+      MenuPages::Audio,
+      MenuPages::SystemPackages,
+      MenuPages::Network,
+      MenuPages::Timezone,
+    ]
+  }
 }
 
 impl Display for MenuPages {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		let s = match self {
-			MenuPages::SourceFlake => "Source Flake",
-			MenuPages::Language => "Language",
-			MenuPages::KeyboardLayout => "Keyboard Layout",
-			MenuPages::Locale => "Locale",
-			MenuPages::EnableFlakes => "Enable Flakes",
-			MenuPages::Drives => "Drives",
-			MenuPages::Bootloader => "Bootloader",
-			MenuPages::Swap => "Swap",
-			MenuPages::Hostname => "Hostname",
-			MenuPages::RootPassword => "Root Password",
-			MenuPages::UserAccounts => "User Accounts",
-			MenuPages::Profile => "Profile",
-			MenuPages::Greeter => "Greeter",
-			MenuPages::DesktopEnvironment => "Desktop Environment",
-			MenuPages::Audio => "Audio",
-			MenuPages::Kernels => "Kernels",
-			MenuPages::SystemPackages => "System Packages",
-			MenuPages::Network => "Network",
-			MenuPages::Timezone => "Timezone",
-		};
-		write!(f, "{s}")
-	}
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let s = match self {
+      MenuPages::SourceFlake => "Source Flake",
+      MenuPages::Language => "Language",
+      MenuPages::KeyboardLayout => "Keyboard Layout",
+      MenuPages::Locale => "Locale",
+      MenuPages::EnableFlakes => "Enable Flakes",
+      MenuPages::Drives => "Drives",
+      MenuPages::Bootloader => "Bootloader",
+      MenuPages::Swap => "Swap",
+      MenuPages::Hostname => "Hostname",
+      MenuPages::RootPassword => "Root Password",
+      MenuPages::UserAccounts => "User Accounts",
+      MenuPages::Profile => "Profile",
+      MenuPages::Greeter => "Greeter",
+      MenuPages::DesktopEnvironment => "Desktop Environment",
+      MenuPages::Audio => "Audio",
+      MenuPages::Kernels => "Kernels",
+      MenuPages::SystemPackages => "System Packages",
+      MenuPages::Network => "Network",
+      MenuPages::Timezone => "Timezone",
+    };
+    write!(f, "{s}")
+  }
 }
 
 impl MenuPages {
-	/// Get the display widget for this page, if any
-	pub fn display_widget(self, installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
-		match self {
-			MenuPages::SourceFlake => SourceFlake::display_widget(installer),
-			MenuPages::Language => Language::display_widget(installer),
-			MenuPages::KeyboardLayout => KeyboardLayout::display_widget(installer),
-			MenuPages::Locale => Locale::display_widget(installer),
-			MenuPages::EnableFlakes => EnableFlakes::display_widget(installer),
-			MenuPages::Drives => {
-				let sector_size = installer.drive_config.as_ref().map(|d| d.sector_size()).unwrap_or(512);
-				installer.drive_config_display.as_deref()
-					.map(|d| Box::new(part_table(d, sector_size)) as Box<dyn ConfigWidget>)
-			}
-			MenuPages::Bootloader => Bootloader::display_widget(installer),
-			MenuPages::Swap => Swap::display_widget(installer),
-			MenuPages::Hostname => Hostname::display_widget(installer),
-			MenuPages::RootPassword => RootPassword::display_widget(installer),
-			MenuPages::UserAccounts => UserAccounts::display_widget(installer),
-			MenuPages::Profile => Profile::display_widget(installer),
-			MenuPages::Greeter => Greeter::display_widget(installer),
-			MenuPages::DesktopEnvironment => DesktopEnvironment::display_widget(installer),
-			MenuPages::Audio => Audio::display_widget(installer),
-			MenuPages::Kernels => Kernels::display_widget(installer),
-			MenuPages::SystemPackages => SystemPackages::display_widget(installer),
-			MenuPages::Network => Network::display_widget(installer),
-			MenuPages::Timezone => Timezone::display_widget(installer),
-		}
-	}
+  /// Get the display widget for this page, if any
+  pub fn display_widget(self, installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
+    match self {
+      MenuPages::SourceFlake => SourceFlake::display_widget(installer),
+      MenuPages::Language => Language::display_widget(installer),
+      MenuPages::KeyboardLayout => KeyboardLayout::display_widget(installer),
+      MenuPages::Locale => Locale::display_widget(installer),
+      MenuPages::EnableFlakes => EnableFlakes::display_widget(installer),
+      MenuPages::Drives => {
+        let sector_size = installer
+          .drive_config
+          .as_ref()
+          .map(|d| d.sector_size())
+          .unwrap_or(512);
+        installer
+          .drive_config_display
+          .as_deref()
+          .map(|d| Box::new(part_table(d, sector_size)) as Box<dyn ConfigWidget>)
+      }
+      MenuPages::Bootloader => Bootloader::display_widget(installer),
+      MenuPages::Swap => Swap::display_widget(installer),
+      MenuPages::Hostname => Hostname::display_widget(installer),
+      MenuPages::RootPassword => RootPassword::display_widget(installer),
+      MenuPages::UserAccounts => UserAccounts::display_widget(installer),
+      MenuPages::Profile => Profile::display_widget(installer),
+      MenuPages::Greeter => Greeter::display_widget(installer),
+      MenuPages::DesktopEnvironment => DesktopEnvironment::display_widget(installer),
+      MenuPages::Audio => Audio::display_widget(installer),
+      MenuPages::Kernels => Kernels::display_widget(installer),
+      MenuPages::SystemPackages => SystemPackages::display_widget(installer),
+      MenuPages::Network => Network::display_widget(installer),
+      MenuPages::Timezone => Timezone::display_widget(installer),
+    }
+  }
 
-	/// Get the page info (title and description) for this page
-	pub fn page_info<'a>(self) -> (String, Vec<Line<'a>>) {
-		match self {
-			MenuPages::SourceFlake => SourceFlake::page_info(),
-			MenuPages::Language => Language::page_info(),
-			MenuPages::KeyboardLayout => KeyboardLayout::page_info(),
-			MenuPages::Locale => Locale::page_info(),
-			MenuPages::EnableFlakes => EnableFlakes::page_info(),
-			MenuPages::Drives => (
-				"Drives".to_string(),
-				styled_block(vec![
-					vec![(None, "Select and configure the drives for your NixOS installation.")],
-					vec![(None, "This includes partitioning, formatting, and mount points.")],
-					vec![(None, "If you have already configured a drive, its current configuration will be shown below.")],
-				])
-			),
-			MenuPages::Bootloader => Bootloader::page_info(),
-			MenuPages::Swap => Swap::page_info(),
-			MenuPages::Hostname => Hostname::page_info(),
-			MenuPages::RootPassword => RootPassword::page_info(),
-			MenuPages::UserAccounts => UserAccounts::page_info(),
-			MenuPages::Profile => Profile::page_info(),
-			MenuPages::Greeter => Greeter::page_info(),
-			MenuPages::DesktopEnvironment => DesktopEnvironment::page_info(),
-			MenuPages::Audio => Audio::page_info(),
-			MenuPages::Kernels => Kernels::page_info(),
-			MenuPages::SystemPackages => SystemPackages::page_info(),
-			MenuPages::Network => Network::page_info(),
-			MenuPages::Timezone => Timezone::page_info(),
-		}
-	}
+  /// Get the page info (title and description) for this page
+  pub fn page_info<'a>(self) -> (String, Vec<Line<'a>>) {
+    match self {
+      MenuPages::SourceFlake => SourceFlake::page_info(),
+      MenuPages::Language => Language::page_info(),
+      MenuPages::KeyboardLayout => KeyboardLayout::page_info(),
+      MenuPages::Locale => Locale::page_info(),
+      MenuPages::EnableFlakes => EnableFlakes::page_info(),
+      MenuPages::Drives => (
+        "Drives".to_string(),
+        styled_block(vec![
+          vec![(
+            None,
+            "Select and configure the drives for your NixOS installation.",
+          )],
+          vec![(
+            None,
+            "This includes partitioning, formatting, and mount points.",
+          )],
+          vec![(
+            None,
+            "If you have already configured a drive, its current configuration will be shown below.",
+          )],
+        ]),
+      ),
+      MenuPages::Bootloader => Bootloader::page_info(),
+      MenuPages::Swap => Swap::page_info(),
+      MenuPages::Hostname => Hostname::page_info(),
+      MenuPages::RootPassword => RootPassword::page_info(),
+      MenuPages::UserAccounts => UserAccounts::page_info(),
+      MenuPages::Profile => Profile::page_info(),
+      MenuPages::Greeter => Greeter::page_info(),
+      MenuPages::DesktopEnvironment => DesktopEnvironment::page_info(),
+      MenuPages::Audio => Audio::page_info(),
+      MenuPages::Kernels => Kernels::page_info(),
+      MenuPages::SystemPackages => SystemPackages::page_info(),
+      MenuPages::Network => Network::page_info(),
+      MenuPages::Timezone => Timezone::page_info(),
+    }
+  }
 
-	/// Navigate to the page - returns a Signal to push the appropriate page
-	pub fn navigate(self, installer: &mut Installer) -> Signal {
-		match self {
-			MenuPages::SourceFlake => Signal::Push(Box::new(SourceFlake::new())),
-			MenuPages::Language => Signal::Push(Box::new(Language::new())),
-			MenuPages::KeyboardLayout => Signal::Push(Box::new(KeyboardLayout::new())),
-			MenuPages::Locale => Signal::Push(Box::new(Locale::new())),
-			MenuPages::EnableFlakes => Signal::Push(Box::new(EnableFlakes::new(installer.enable_flakes))),
-			MenuPages::Drives => Signal::Push(Box::new(Drives::new())),
-			MenuPages::Bootloader => Signal::Push(Box::new(Bootloader::new())),
-			MenuPages::Swap => Signal::Push(Box::new(Swap::new(installer.use_swap))),
-			MenuPages::Hostname => Signal::Push(Box::new(Hostname::new())),
-			MenuPages::RootPassword => Signal::Push(Box::new(RootPassword::new())),
-			MenuPages::UserAccounts => Signal::Push(Box::new(UserAccounts::new(installer.users.clone()))),
-			MenuPages::Profile => Signal::Push(Box::new(Profile::new())),
-			MenuPages::Greeter => Signal::Push(Box::new(Greeter::new())),
-			MenuPages::DesktopEnvironment => Signal::Push(Box::new(DesktopEnvironment::new())),
-			MenuPages::Audio => Signal::Push(Box::new(Audio::new())),
-			MenuPages::Kernels => Signal::Push(Box::new(Kernels::new())),
-			MenuPages::SystemPackages => {
-				// we actually need to go ask nixpkgs what packages it has now
-				let pkgs = {
-					let mut retries = 0;
-					loop {
-						let guard = NIXPKGS.read().unwrap();
-						if let Some(nixpkgs) = guard.as_ref() {
-							// Great, the package list has been populated
-							break nixpkgs.clone();
-						}
-						drop(guard); // Release lock before sleeping
+  /// Navigate to the page - returns a Signal to push the appropriate page
+  pub fn navigate(self, installer: &mut Installer) -> Signal {
+    match self {
+      MenuPages::SourceFlake => Signal::Push(Box::new(SourceFlake::new())),
+      MenuPages::Language => Signal::Push(Box::new(Language::new())),
+      MenuPages::KeyboardLayout => Signal::Push(Box::new(KeyboardLayout::new())),
+      MenuPages::Locale => Signal::Push(Box::new(Locale::new())),
+      MenuPages::EnableFlakes => Signal::Push(Box::new(EnableFlakes::new(installer.enable_flakes))),
+      MenuPages::Drives => Signal::Push(Box::new(Drives::new())),
+      MenuPages::Bootloader => Signal::Push(Box::new(Bootloader::new())),
+      MenuPages::Swap => Signal::Push(Box::new(Swap::new(installer.use_swap))),
+      MenuPages::Hostname => Signal::Push(Box::new(Hostname::new())),
+      MenuPages::RootPassword => Signal::Push(Box::new(RootPassword::new())),
+      MenuPages::UserAccounts => Signal::Push(Box::new(UserAccounts::new(installer.users.clone()))),
+      MenuPages::Profile => Signal::Push(Box::new(Profile::new())),
+      MenuPages::Greeter => Signal::Push(Box::new(Greeter::new())),
+      MenuPages::DesktopEnvironment => Signal::Push(Box::new(DesktopEnvironment::new())),
+      MenuPages::Audio => Signal::Push(Box::new(Audio::new())),
+      MenuPages::Kernels => Signal::Push(Box::new(Kernels::new())),
+      MenuPages::SystemPackages => {
+        // we actually need to go ask nixpkgs what packages it has now
+        let pkgs = {
+          let mut retries = 0;
+          loop {
+            let guard = NIXPKGS.read().unwrap();
+            if let Some(nixpkgs) = guard.as_ref() {
+              // Great, the package list has been populated
+              break nixpkgs.clone();
+            }
+            drop(guard); // Release lock before sleeping
 
-						if retries >= 5 {
-							// Last attempt to grab the package list before breaking
-							break fetch_nixpkgs().unwrap_or_default();
-						}
+            if retries >= 5 {
+              // Last attempt to grab the package list before breaking
+              break fetch_nixpkgs().unwrap_or_default();
+            }
 
-						std::thread::sleep(std::time::Duration::from_millis(500));
-						retries += 1;
-					}
-				};
-				Signal::Push(Box::new(SystemPackages::new(installer.system_pkgs.clone(), pkgs)))
-			}
-			MenuPages::Network => Signal::Push(Box::new(Network::new())),
-			MenuPages::Timezone => Signal::Push(Box::new(Timezone::new())),
-		}
-	}
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            retries += 1;
+          }
+        };
+        Signal::Push(Box::new(SystemPackages::new(
+          installer.system_pkgs.clone(),
+          pkgs,
+        )))
+      }
+      MenuPages::Network => Signal::Push(Box::new(Network::new())),
+      MenuPages::Timezone => Signal::Push(Box::new(Timezone::new())),
+    }
+  }
 }
 
 /// The main menu page
 pub struct Menu {
-	menu_items: StrList,
-	border_flash_timer: u32,
-	button_row: WidgetBox,
-	help_modal: HelpModal<'static>,
+  menu_items: StrList,
+  border_flash_timer: u32,
+  button_row: WidgetBox,
+  help_modal: HelpModal<'static>,
 }
 
 impl Menu {
-	pub fn new() -> Self {
-		let items = MenuPages::supported_pages().iter().map(|p| p.to_string()).collect::<Vec<_>>();
-		let mut menu_items = StrList::new("Main Menu", items);
-		let buttons: Vec<Box<dyn ConfigWidget>> = vec![
-			Box::new(Button::new("Done")),
-			Box::new(Button::new("Abort")),
-		];
-		let button_row = WidgetBoxBuilder::new()
-			.children(buttons)
-			.build();
-		menu_items.focus();
-		let help_content = styled_block(vec![
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate menu options")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select and configure option")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Tab, End, G"), (None, " - Move to action buttons")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Home, g"), (None, " - Return to menu options")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "q"), (None, " - Quit installer")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
-			vec![(None, "")],
-			vec![(None, "Required options are shown in red when not configured.")],
-			vec![(None, "Configure all required options before proceeding.")],
-		]);
-		let help_modal = HelpModal::new("Main Menu", help_content);
-		Self { menu_items, button_row, help_modal, border_flash_timer: 0 }
-	}
-	pub fn info_box_for_item(&mut self, installer: &mut Installer, idx: usize) -> WidgetBox {
-		// Get the actual page from supported_pages using the index
-		let supported_pages = MenuPages::supported_pages();
-		let page = supported_pages.get(idx).copied();
+  pub fn new() -> Self {
+    let items = MenuPages::supported_pages()
+      .iter()
+      .map(|p| p.to_string())
+      .collect::<Vec<_>>();
+    let mut menu_items = StrList::new("Main Menu", items);
+    let buttons: Vec<Box<dyn ConfigWidget>> = vec![
+      Box::new(Button::new("Done")),
+      Box::new(Button::new("Abort")),
+    ];
+    let button_row = WidgetBoxBuilder::new().children(buttons).build();
+    menu_items.focus();
+    let help_content = styled_block(vec![
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"),
+        (None, " - Navigate menu options"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Enter"),
+        (None, " - Select and configure option"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Tab, End, G"),
+        (None, " - Move to action buttons"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Home, g"),
+        (None, " - Return to menu options"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "q"),
+        (None, " - Quit installer"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "?"),
+        (None, " - Show this help"),
+      ],
+      vec![(None, "")],
+      vec![(
+        None,
+        "Required options are shown in red when not configured.",
+      )],
+      vec![(None, "Configure all required options before proceeding.")],
+    ]);
+    let help_modal = HelpModal::new("Main Menu", help_content);
+    Self {
+      menu_items,
+      button_row,
+      help_modal,
+      border_flash_timer: 0,
+    }
+  }
+  pub fn info_box_for_item(&mut self, installer: &mut Installer, idx: usize) -> WidgetBox {
+    // Get the actual page from supported_pages using the index
+    let supported_pages = MenuPages::supported_pages();
+    let page = supported_pages.get(idx).copied();
 
-		let (display_widget, title, content) = if let Some(page) = page {
-			let display_widget = page.display_widget(installer);
-			let (title, content) = page.page_info();
-			(display_widget, title, content)
-		} else {
-			(
-				None,
-				"Unknown Option".to_string(),
-				styled_block(vec![
-					vec![(None, "No information available for this option.")],
-				])
-			)
-		};
-		let mut info_box = Box::new(InfoBox::new(title, content));
-		if self.border_flash_timer > 0 {
-			match self.border_flash_timer % 2 {
-				1 => info_box.highlighted(true),
-				0 => info_box.highlighted(false),
-				_ => unreachable!()
-			}
-			self.border_flash_timer -= 1;
-		}
-		if let Some(widget) = display_widget {
-			WidgetBoxBuilder::new()
-				.layout(
-					Layout::default()
-					.direction(Direction::Vertical)
-					.constraints(
-						[
-							Constraint::Percentage(50),
-							Constraint::Percentage(50),
-						]
-						.as_ref(),
-					)
-				)
-				.children(vec![info_box,widget])
-				.build()
-		} else {
-			WidgetBoxBuilder::new()
-				.children(vec![info_box])
-				.build()
-		}
+    let (display_widget, title, content) = if let Some(page) = page {
+      let display_widget = page.display_widget(installer);
+      let (title, content) = page.page_info();
+      (display_widget, title, content)
+    } else {
+      (
+        None,
+        "Unknown Option".to_string(),
+        styled_block(vec![vec![(
+          None,
+          "No information available for this option.",
+        )]]),
+      )
+    };
+    let mut info_box = Box::new(InfoBox::new(title, content));
+    if self.border_flash_timer > 0 {
+      match self.border_flash_timer % 2 {
+        1 => info_box.highlighted(true),
+        0 => info_box.highlighted(false),
+        _ => unreachable!(),
+      }
+      self.border_flash_timer -= 1;
+    }
+    if let Some(widget) = display_widget {
+      WidgetBoxBuilder::new()
+        .layout(
+          Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref()),
+        )
+        .children(vec![info_box, widget])
+        .build()
+    } else {
+      WidgetBoxBuilder::new().children(vec![info_box]).build()
+    }
+  }
+  pub fn remaining_requirements(
+    &self,
+    installer: &mut Installer,
+    border_flash_timer: u32,
+  ) -> InfoBox<'_> {
+    let mut lines = vec![];
+    if installer.root_passwd_hash.is_none() {
+      lines.push(vec![(
+        Some((Color::Red, Modifier::BOLD)),
+        " - Root Password",
+      )]);
+    }
+    if installer.drives.is_empty() || installer.drive_config.is_none() {
+      lines.push(vec![(
+        Some((Color::Red, Modifier::BOLD)),
+        " - Drive Configuration",
+      )]);
+    }
+    if installer.users.is_empty() {
+      lines.push(vec![(
+        Some((Color::Red, Modifier::BOLD)),
+        " - At least one User Account",
+      )]);
+    }
+    if installer.bootloader.is_none() {
+      lines.push(vec![(Some((Color::Red, Modifier::BOLD)), " - Bootloader")]);
+    }
+    if lines.is_empty() {
+      lines.push(vec![(
+        Some((Color::Green, Modifier::BOLD)),
+        "All required options have been configured!",
+      )]);
+    } else {
+      lines.insert(
+        0,
+        vec![(
+          None,
+          "The following required options are not yet configured:",
+        )],
+      );
+      lines.push(vec![(None, "Please configure them before proceeding.")]);
+    }
 
-	}
-	pub fn remaining_requirements(&self, installer: &mut Installer, border_flash_timer: u32) -> InfoBox<'_> {
-		let mut lines = vec![];
-		if installer.root_passwd_hash.is_none() {
-			lines.push(vec![(Some((Color::Red, Modifier::BOLD)), " - Root Password")]);
-		}
-		if installer.drives.is_empty() || installer.drive_config.is_none() {
-			lines.push(vec![(Some((Color::Red, Modifier::BOLD)), " - Drive Configuration")]);
-		}
-		if installer.users.is_empty() {
-			lines.push(vec![(Some((Color::Red, Modifier::BOLD)), " - At least one User Account")]);
-		}
-		if installer.bootloader.is_none() {
-			lines.push(vec![(Some((Color::Red, Modifier::BOLD)), " - Bootloader")]);
-		}
-		if lines.is_empty() {
-			lines.push(vec![(Some((Color::Green, Modifier::BOLD)), "All required options have been configured!")]);
-		} else {
-			lines.insert(0, vec![(None, "The following required options are not yet configured:")]);
-			lines.push(vec![(None, "Please configure them before proceeding.")]);
-		}
-
-		let mut info_box = InfoBox::new("Required Config", styled_block(lines));
-		if border_flash_timer > 0 {
-			match self.border_flash_timer % 2 {
-				1 => info_box.highlighted(true),
-				0 => info_box.highlighted(false),
-				_ => unreachable!()
-			}
-		}
-		info_box
-	}
+    let mut info_box = InfoBox::new("Required Config", styled_block(lines));
+    if border_flash_timer > 0 {
+      match self.border_flash_timer % 2 {
+        1 => info_box.highlighted(true),
+        0 => info_box.highlighted(false),
+        _ => unreachable!(),
+      }
+    }
+    info_box
+  }
 }
 
 impl Default for Menu {
-	fn default() -> Self {
-		Self::new()
-	}
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl Page for Menu {
@@ -666,81 +741,126 @@ impl Page for Menu {
 	}
 }
 /*
-			MenuPages::SourceFlake,
-			MenuPages::Language,
-			MenuPages::KeyboardLayout,
-			MenuPages::Locale,
-			MenuPages::EnableFlakes,
-			MenuPages::Drives,
-			MenuPages::Bootloader,
-			MenuPages::Swap,
-			MenuPages::Hostname,
-			MenuPages::RootPassword,
-			MenuPages::UserAccounts,
-			MenuPages::Profile,
-			MenuPages::Greeter,
-			MenuPages::DesktopEnvironment,
-			MenuPages::Audio,
-			MenuPages::Kernels,
-			MenuPages::Virtualization,
-			MenuPages::SystemPackages,
-			MenuPages::Network,
-			MenuPages::Timezone,
+      MenuPages::SourceFlake,
+      MenuPages::Language,
+      MenuPages::KeyboardLayout,
+      MenuPages::Locale,
+      MenuPages::EnableFlakes,
+      MenuPages::Drives,
+      MenuPages::Bootloader,
+      MenuPages::Swap,
+      MenuPages::Hostname,
+      MenuPages::RootPassword,
+      MenuPages::UserAccounts,
+      MenuPages::Profile,
+      MenuPages::Greeter,
+      MenuPages::DesktopEnvironment,
+      MenuPages::Audio,
+      MenuPages::Kernels,
+      MenuPages::Virtualization,
+      MenuPages::SystemPackages,
+      MenuPages::Network,
+      MenuPages::Timezone,
 */
 
 pub struct SourceFlake {
-	pub input: LineEditor,
-	help_modal: HelpModal<'static>,
+  pub input: LineEditor,
+  help_modal: HelpModal<'static>,
 }
 
 impl SourceFlake {
-	pub fn new() -> Self {
-		let mut input = LineEditor::new("Source Config Flake", Some("e.g. '/path/to/flake#my-host' or 'github:user/repo#my-host'"));
-		input.focus();
-		let help_content = styled_block(vec![
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Save configuration and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Cancel and return to menu")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "←/→"), (None, " - Move cursor")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Home/End"), (None, " - Jump to beginning/end")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Backspace/Del"), (None, " - Delete characters")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
-			vec![(None, "")],
-			vec![(None, "Enter a flake path to use as system configuration source.")],
-			vec![(None, "Examples:")],
-			vec![(None, "  /path/to/flake#my-host")],
-			vec![(None, "  github:user/repo#my-host")],
-		]);
-		let help_modal = HelpModal::new("Source Flake", help_content);
-		Self { input, help_modal }
-	}
-	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
-		installer.flake_path.clone().map(|s| {
-			let ib = InfoBox::new("", styled_block(vec![
-				vec![(None, "Current flake path set to:")],
-				vec![(HIGHLIGHT, &s)],
-			]));
-			Box::new(ib) as Box<dyn ConfigWidget>
-		})
-	}
-	pub fn page_info<'a>() -> (String, Vec<Line<'a>>) {
-		(
-			"Source Flake".to_string(),
-			styled_block(vec![
-				vec![(None,"Choose a flake output to use as a source for the system configuration.")],
-				vec![(None,"This can be used in place of manual configuration using this installer. You will still need to set up a disk partitioning plan, however.")],
-				vec![(None,"This can be "), (Some((Color::Reset, Modifier::ITALIC)), "any valid path"), (None," to a flake output that produces a "), (Some((Color::Cyan, Modifier::BOLD)), "'nixosConfiguration'"), (None," attribute.")],
-				vec![(None,"Examples include:")],
-				vec![(None," - A local flake: "), (HIGHLIGHT, "'/path/to/flake#my-host'")],
-				vec![(None," - A GitHub flake: "), (HIGHLIGHT, "'github:user/repo#my-host'")],
-			])
-		)
-	}
+  pub fn new() -> Self {
+    let mut input = LineEditor::new(
+      "Source Config Flake",
+      Some("e.g. '/path/to/flake#my-host' or 'github:user/repo#my-host'"),
+    );
+    input.focus();
+    let help_content = styled_block(vec![
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Enter"),
+        (None, " - Save configuration and return"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Esc"),
+        (None, " - Cancel and return to menu"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "←/→"),
+        (None, " - Move cursor"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Home/End"),
+        (None, " - Jump to beginning/end"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Backspace/Del"),
+        (None, " - Delete characters"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "?"),
+        (None, " - Show this help"),
+      ],
+      vec![(None, "")],
+      vec![(
+        None,
+        "Enter a flake path to use as system configuration source.",
+      )],
+      vec![(None, "Examples:")],
+      vec![(None, "  /path/to/flake#my-host")],
+      vec![(None, "  github:user/repo#my-host")],
+    ]);
+    let help_modal = HelpModal::new("Source Flake", help_content);
+    Self { input, help_modal }
+  }
+  pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
+    installer.flake_path.clone().map(|s| {
+      let ib = InfoBox::new(
+        "",
+        styled_block(vec![
+          vec![(None, "Current flake path set to:")],
+          vec![(HIGHLIGHT, &s)],
+        ]),
+      );
+      Box::new(ib) as Box<dyn ConfigWidget>
+    })
+  }
+  pub fn page_info<'a>() -> (String, Vec<Line<'a>>) {
+    (
+      "Source Flake".to_string(),
+      styled_block(vec![
+        vec![(
+          None,
+          "Choose a flake output to use as a source for the system configuration.",
+        )],
+        vec![(
+          None,
+          "This can be used in place of manual configuration using this installer. You will still need to set up a disk partitioning plan, however.",
+        )],
+        vec![
+          (None, "This can be "),
+          (Some((Color::Reset, Modifier::ITALIC)), "any valid path"),
+          (None, " to a flake output that produces a "),
+          (Some((Color::Cyan, Modifier::BOLD)), "'nixosConfiguration'"),
+          (None, " attribute."),
+        ],
+        vec![(None, "Examples include:")],
+        vec![
+          (None, " - A local flake: "),
+          (HIGHLIGHT, "'/path/to/flake#my-host'"),
+        ],
+        vec![
+          (None, " - A GitHub flake: "),
+          (HIGHLIGHT, "'github:user/repo#my-host'"),
+        ],
+      ]),
+    )
+  }
 }
 
 impl Default for SourceFlake {
-	fn default() -> Self {
-		Self::new()
-	}
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl Page for SourceFlake {
@@ -828,11 +948,12 @@ impl Page for SourceFlake {
 			_ => self.input.handle_input(event)
 		}
 	}
+
 }
 
 pub struct Language {
-	langs: StrList,
-	help_modal: HelpModal<'static>,
+  langs: StrList,
+  help_modal: HelpModal<'static>,
 }
 
 impl Language {
@@ -876,9 +997,9 @@ impl Language {
 }
 
 impl Default for Language {
-	fn default() -> Self {
-		Self::new()
-	}
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl Page for Language {
@@ -933,8 +1054,8 @@ impl Page for Language {
 }
 
 pub struct KeyboardLayout {
-	layouts: StrList,
-	help_modal: HelpModal<'static>,
+  layouts: StrList,
+  help_modal: HelpModal<'static>,
 }
 
 impl KeyboardLayout {
@@ -999,9 +1120,9 @@ impl KeyboardLayout {
 }
 
 impl Default for KeyboardLayout {
-	fn default() -> Self {
-		Self::new()
-	}
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl Page for KeyboardLayout {
@@ -1056,8 +1177,8 @@ impl Page for KeyboardLayout {
 }
 
 pub struct Locale {
-	locales: StrList,
-	help_modal: HelpModal<'static>,
+  locales: StrList,
+  help_modal: HelpModal<'static>,
 }
 
 impl Locale {
@@ -1120,9 +1241,9 @@ impl Locale {
 }
 
 impl Default for Locale {
-	fn default() -> Self {
-		Self::new()
-	}
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl Page for Locale {
@@ -1178,8 +1299,8 @@ impl Page for Locale {
 }
 
 pub struct EnableFlakes {
-	buttons: WidgetBox,
-	help_modal: HelpModal<'static>,
+  buttons: WidgetBox,
+  help_modal: HelpModal<'static>,
 }
 
 impl EnableFlakes {
@@ -1221,9 +1342,9 @@ impl EnableFlakes {
 }
 
 impl Default for EnableFlakes {
-	fn default() -> Self {
-		Self::new(false)
-	}
+  fn default() -> Self {
+    Self::new(false)
+  }
 }
 
 impl Page for EnableFlakes {
@@ -1315,11 +1436,12 @@ impl Page for EnableFlakes {
 			_ => Signal::Wait
 		}
 	}
+
 }
 
 pub struct Bootloader {
-	loaders: StrList,
-	help_modal: HelpModal<'static>,
+  loaders: StrList,
+  help_modal: HelpModal<'static>,
 }
 
 impl Bootloader {
@@ -1365,9 +1487,9 @@ impl Bootloader {
 }
 
 impl Default for Bootloader {
-	fn default() -> Self {
-		Self::new()
-	}
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl Page for Bootloader {
@@ -1419,11 +1541,12 @@ impl Page for Bootloader {
 			_ => self.loaders.handle_input(event)
 		}
 	}
+
 }
 
 pub struct Swap {
-	buttons: WidgetBox,
-	help_modal: HelpModal<'static>,
+  buttons: WidgetBox,
+  help_modal: HelpModal<'static>,
 }
 
 impl Swap {
@@ -1466,9 +1589,9 @@ impl Swap {
 }
 
 impl Default for Swap {
-	fn default() -> Self {
-		Self::new(false)
-	}
+  fn default() -> Self {
+    Self::new(false)
+  }
 }
 
 impl Page for Swap {
@@ -1560,55 +1683,89 @@ impl Page for Swap {
 			_ => Signal::Wait
 		}
 	}
+
 }
 
 pub struct Hostname {
-	input: LineEditor,
-	help_modal: HelpModal<'static>,
+  input: LineEditor,
+  help_modal: HelpModal<'static>,
 }
 
 impl Hostname {
-	pub fn new() -> Self {
-		let mut input = LineEditor::new("Set Hostname", Some("e.g. 'my-computer'"));
-		input.focus();
-		let help_content = styled_block(vec![
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Save hostname and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Cancel and return to menu")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "←/→"), (None, " - Move cursor")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Home/End"), (None, " - Jump to beginning/end")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Backspace/Del"), (None, " - Delete characters")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
-			vec![(None, "")],
-			vec![(None, "Set a unique hostname for your computer on the network.")],
-		]);
-		let help_modal = HelpModal::new("Hostname", help_content);
-		Self { input, help_modal }
-	}
-	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
-		installer.hostname.clone().map(|s| {
-			let ib = InfoBox::new("", styled_block(vec![
-				vec![(None, "Current hostname set to:")],
-				vec![(HIGHLIGHT, &s)],
-			]));
-			Box::new(ib) as Box<dyn ConfigWidget>
-		})
-	}
-	pub fn page_info<'a>() -> (String, Vec<Line<'a>>) {
-		(
-			"Hostname".to_string(),
-			styled_block(vec![
-				vec![(None,"The hostname is a unique identifier for your computer on a network.")],
-				vec![(None,"It is used to distinguish your computer from other devices and can be helpful for network management and troubleshooting.")],
-				vec![(None,"Choose a hostname that is easy to remember and reflects the purpose or identity of your computer.")],
-			])
-		)
-	}
+  pub fn new() -> Self {
+    let mut input = LineEditor::new("Set Hostname", Some("e.g. 'my-computer'"));
+    input.focus();
+    let help_content = styled_block(vec![
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Enter"),
+        (None, " - Save hostname and return"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Esc"),
+        (None, " - Cancel and return to menu"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "←/→"),
+        (None, " - Move cursor"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Home/End"),
+        (None, " - Jump to beginning/end"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Backspace/Del"),
+        (None, " - Delete characters"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "?"),
+        (None, " - Show this help"),
+      ],
+      vec![(None, "")],
+      vec![(
+        None,
+        "Set a unique hostname for your computer on the network.",
+      )],
+    ]);
+    let help_modal = HelpModal::new("Hostname", help_content);
+    Self { input, help_modal }
+  }
+  pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
+    installer.hostname.clone().map(|s| {
+      let ib = InfoBox::new(
+        "",
+        styled_block(vec![
+          vec![(None, "Current hostname set to:")],
+          vec![(HIGHLIGHT, &s)],
+        ]),
+      );
+      Box::new(ib) as Box<dyn ConfigWidget>
+    })
+  }
+  pub fn page_info<'a>() -> (String, Vec<Line<'a>>) {
+    (
+      "Hostname".to_string(),
+      styled_block(vec![
+        vec![(
+          None,
+          "The hostname is a unique identifier for your computer on a network.",
+        )],
+        vec![(
+          None,
+          "It is used to distinguish your computer from other devices and can be helpful for network management and troubleshooting.",
+        )],
+        vec![(
+          None,
+          "Choose a hostname that is easy to remember and reflects the purpose or identity of your computer.",
+        )],
+      ]),
+    )
+  }
 }
 
 impl Default for Hostname {
-	fn default() -> Self {
-		Self::new()
-	}
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl Page for Hostname {
@@ -1690,78 +1847,124 @@ impl Page for Hostname {
 			_ => self.input.handle_input(event)
 		}
 	}
+
 }
 
 pub struct RootPassword {
-	input: LineEditor,
-	confirm: LineEditor,
-	help_modal: HelpModal<'static>,
+  input: LineEditor,
+  confirm: LineEditor,
+  help_modal: HelpModal<'static>,
 }
 
 impl RootPassword {
-	pub fn new() -> Self {
-		let mut input = LineEditor::new("Set Root Password", Some("Password will be hidden")).secret(true);
-		let confirm = LineEditor::new("Confirm Password", Some("Password will be hidden")).secret(true);
-		input.focus();
-		let help_content = styled_block(vec![
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Move to next field or save when complete")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Tab"), (None, " - Switch between password fields")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Cancel and return to menu")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "←/→"), (None, " - Move cursor")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Home/End"), (None, " - Jump to beginning/end")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Backspace/Del"), (None, " - Delete characters")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
-			vec![(None, "")],
-			vec![(None, "Set a strong root password for system security.")],
-		]);
-		let help_modal = HelpModal::new("Root Password", help_content);
-		Self { input, confirm, help_modal }
-	}
-	pub fn page_info<'a>() -> (String, Vec<Line<'a>>) {
-		(
-			"Root Password".to_string(),
-			styled_block(vec![
-				vec![(None,"The root user is the superuser account on a Unix-like operating system, including Linux.")],
-				vec![(None,"It has full administrative privileges and can perform any action on the system, including installing software, modifying system settings, and accessing all files and directories.")],
-				vec![(None,"Setting a strong password for the root user is important for system security, as it helps prevent unauthorized access to sensitive system functions and data.")],
-				vec![(None,"Choose a password that is difficult to guess and contains a mix of uppercase and lowercase letters, numbers, and special characters.")],
-			])
-		)
-	}
-	pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
-		installer.root_passwd_hash.as_ref().map(|_| {
-			let ib = InfoBox::new("", styled_block(vec![
-				vec![(HIGHLIGHT, "Root password is set.")]
-			]));
-			Box::new(ib) as Box<dyn ConfigWidget>
-		})
-	}
-	pub fn mkpasswd(passwd: String) -> anyhow::Result<String> {
-		let mut child = Command::new("mkpasswd")
-			.arg("--method=SHA-512")
-			.arg("--rounds=4096")
-			.arg("--stdin")
-			.stdin(Stdio::piped())
-			.stdout(Stdio::piped())
-			.spawn()?;
-		{
-			let stdin = child.stdin.as_mut().ok_or_else(|| anyhow::anyhow!("Failed to open stdin"))?;
-			stdin.write_all(passwd.as_bytes())?;
-		}
-		let output = child.wait_with_output()?;
-		if output.status.success() {
-			let hashed = String::from_utf8_lossy(&output.stdout).trim().to_string();
-			Ok(hashed)
-		} else {
-			Err(anyhow::anyhow!("mkpasswd failed: {}", String::from_utf8_lossy(&output.stderr)))
-		}
-	}
+  pub fn new() -> Self {
+    let mut input =
+      LineEditor::new("Set Root Password", Some("Password will be hidden")).secret(true);
+    let confirm = LineEditor::new("Confirm Password", Some("Password will be hidden")).secret(true);
+    input.focus();
+    let help_content = styled_block(vec![
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Enter"),
+        (None, " - Move to next field or save when complete"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Tab"),
+        (None, " - Switch between password fields"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Esc"),
+        (None, " - Cancel and return to menu"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "←/→"),
+        (None, " - Move cursor"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Home/End"),
+        (None, " - Jump to beginning/end"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Backspace/Del"),
+        (None, " - Delete characters"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "?"),
+        (None, " - Show this help"),
+      ],
+      vec![(None, "")],
+      vec![(None, "Set a strong root password for system security.")],
+    ]);
+    let help_modal = HelpModal::new("Root Password", help_content);
+    Self {
+      input,
+      confirm,
+      help_modal,
+    }
+  }
+  pub fn page_info<'a>() -> (String, Vec<Line<'a>>) {
+    (
+      "Root Password".to_string(),
+      styled_block(vec![
+        vec![(
+          None,
+          "The root user is the superuser account on a Unix-like operating system, including Linux.",
+        )],
+        vec![(
+          None,
+          "It has full administrative privileges and can perform any action on the system, including installing software, modifying system settings, and accessing all files and directories.",
+        )],
+        vec![(
+          None,
+          "Setting a strong password for the root user is important for system security, as it helps prevent unauthorized access to sensitive system functions and data.",
+        )],
+        vec![(
+          None,
+          "Choose a password that is difficult to guess and contains a mix of uppercase and lowercase letters, numbers, and special characters.",
+        )],
+      ]),
+    )
+  }
+  pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
+    installer.root_passwd_hash.as_ref().map(|_| {
+      let ib = InfoBox::new(
+        "",
+        styled_block(vec![vec![(HIGHLIGHT, "Root password is set.")]]),
+      );
+      Box::new(ib) as Box<dyn ConfigWidget>
+    })
+  }
+  pub fn mkpasswd(passwd: String) -> anyhow::Result<String> {
+    let mut child = Command::new("mkpasswd")
+      .arg("--method=SHA-512")
+      .arg("--rounds=4096")
+      .arg("--stdin")
+      .stdin(Stdio::piped())
+      .stdout(Stdio::piped())
+      .spawn()?;
+    {
+      let stdin = child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| anyhow::anyhow!("Failed to open stdin"))?;
+      stdin.write_all(passwd.as_bytes())?;
+    }
+    let output = child.wait_with_output()?;
+    if output.status.success() {
+      let hashed = String::from_utf8_lossy(&output.stdout).trim().to_string();
+      Ok(hashed)
+    } else {
+      Err(anyhow::anyhow!(
+        "mkpasswd failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+      ))
+    }
+  }
 }
 
 impl Default for RootPassword {
-	fn default() -> Self {
-		Self::new()
-	}
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl Page for RootPassword {
@@ -1901,11 +2104,12 @@ impl Page for RootPassword {
 			}
 		}
 	}
+
 }
 
 pub struct Profile {
-	profiles: StrList,
-	help_modal: HelpModal<'static>,
+  profiles: StrList,
+  help_modal: HelpModal<'static>,
 }
 
 impl Profile {
@@ -1952,12 +2156,13 @@ impl Profile {
 			])
 		)
 	}
+
 }
 
 impl Default for Profile {
-	fn default() -> Self {
-		Self::new()
-	}
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl Page for Profile {
@@ -2012,8 +2217,8 @@ impl Page for Profile {
 }
 
 pub struct Greeter {
-	greeters: StrList,
-	help_modal: HelpModal<'static>,
+  greeters: StrList,
+  help_modal: HelpModal<'static>,
 }
 
 impl Greeter {
@@ -2061,9 +2266,9 @@ impl Greeter {
 }
 
 impl Default for Greeter {
-	fn default() -> Self {
-		Self::new()
-	}
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl Page for Greeter {
@@ -2118,8 +2323,8 @@ impl Page for Greeter {
 }
 
 pub struct DesktopEnvironment {
-	desktops: StrList,
-	help_modal: HelpModal<'static>,
+  desktops: StrList,
+  help_modal: HelpModal<'static>,
 }
 
 impl DesktopEnvironment {
@@ -2174,9 +2379,9 @@ impl DesktopEnvironment {
 }
 
 impl Default for DesktopEnvironment {
-	fn default() -> Self {
-		Self::new()
-	}
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl Page for DesktopEnvironment {
@@ -2231,8 +2436,8 @@ impl Page for DesktopEnvironment {
 }
 
 pub struct Kernels {
-	kernels: StrList,
-	help_modal: HelpModal<'static>,
+  kernels: StrList,
+  help_modal: HelpModal<'static>,
 }
 
 impl Kernels {
@@ -2279,12 +2484,13 @@ impl Kernels {
 			])
 		)
 	}
+
 }
 
 impl Default for Kernels {
-	fn default() -> Self {
-		Self::new()
-	}
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl Page for Kernels {
@@ -2340,8 +2546,8 @@ impl Page for Kernels {
 }
 
 pub struct Audio {
-	backends: StrList,
-	help_modal: HelpModal<'static>,
+  backends: StrList,
+  help_modal: HelpModal<'static>,
 }
 
 impl Audio {
@@ -2389,9 +2595,9 @@ impl Audio {
 }
 
 impl Default for Audio {
-	fn default() -> Self {
-		Self::new()
-	}
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl Page for Audio {
@@ -2446,8 +2652,8 @@ impl Page for Audio {
 }
 
 pub struct Network {
-	backends: StrList,
-	help_modal: HelpModal<'static>,
+  backends: StrList,
+  help_modal: HelpModal<'static>,
 }
 
 impl Network {
@@ -2496,9 +2702,9 @@ impl Network {
 }
 
 impl Default for Network {
-	fn default() -> Self {
-		Self::new()
-	}
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl Page for Network {
@@ -2553,8 +2759,8 @@ impl Page for Network {
 }
 
 pub struct Timezone {
-	timezones: StrList,
-	help_modal: HelpModal<'static>,
+  timezones: StrList,
+  help_modal: HelpModal<'static>,
 }
 
 impl Timezone {
@@ -2614,9 +2820,9 @@ impl Timezone {
 }
 
 impl Default for Timezone {
-	fn default() -> Self {
-		Self::new()
-	}
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl Page for Timezone {
@@ -2671,71 +2877,93 @@ impl Page for Timezone {
 }
 
 pub struct ConfigPreview {
-	system_config: String,
-	disko_config: String,
-	_flake_path: Option<String>,
-	scroll_position: usize,
-	button_row: WidgetBox,
-	current_view: ConfigView,
-	help_modal: HelpModal<'static>,
-	visible_lines: usize,
+  system_config: String,
+  disko_config: String,
+  _flake_path: Option<String>,
+  scroll_position: usize,
+  button_row: WidgetBox,
+  current_view: ConfigView,
+  help_modal: HelpModal<'static>,
+  visible_lines: usize,
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum ConfigView {
-	System,
-	Disko,
+  System,
+  Disko,
 }
 
 impl ConfigPreview {
+  /// Maximum scroll distance for config preview window
+  fn get_max_scroll(&self, visible_lines: usize) -> usize {
+    let config_content = match self.current_view {
+      ConfigView::System => &self.system_config,
+      ConfigView::Disko => &self.disko_config,
+    };
+    let lines = config_content.lines().count();
+    lines.saturating_sub(visible_lines)
+  }
 
-	/// Maximum scroll distance for config preview window
-	fn get_max_scroll(&self, visible_lines: usize) -> usize {
-		let config_content = match self.current_view {
-			ConfigView::System => &self.system_config,
-			ConfigView::Disko => &self.disko_config,
-		};
-		let lines = config_content.lines().count();
-		lines.saturating_sub(visible_lines)
-	}
+  pub fn new(installer: &mut Installer) -> anyhow::Result<Self> {
+    // Generate the configuration like the main app does
+    let config_json = installer.to_json()?;
+    let serializer = crate::nixgen::NixWriter::new(config_json);
 
-	pub fn new(installer: &mut Installer) -> anyhow::Result<Self> {
-		// Generate the configuration like the main app does
-		let config_json = installer.to_json()?;
-		let serializer = crate::nixgen::NixWriter::new(config_json);
+    let configs = serializer.write_configs()?;
 
-		let configs = serializer.write_configs()?;
+    let buttons: Vec<Box<dyn ConfigWidget>> = vec![
+      Box::new(Button::new("Begin Installation")),
+      Box::new(Button::new("Back")),
+    ];
+    let button_row = WidgetBox::button_menu(buttons);
+    let help_content = styled_block(vec![
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "1/2"),
+        (None, " - Switch between System/Disko config"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"),
+        (None, " - Scroll config content"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Page Up/Down"),
+        (None, " - Scroll page by page"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Tab"),
+        (None, " - Switch to buttons"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Enter"),
+        (None, " - Activate selected button"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Esc"),
+        (None, " - Go back to menu"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "?"),
+        (None, " - Show this help"),
+      ],
+      vec![(None, "")],
+      vec![(
+        None,
+        "Review the generated NixOS configuration before saving.",
+      )],
+    ]);
+    let help_modal = HelpModal::new("Config Preview", help_content);
 
-		let buttons: Vec<Box<dyn ConfigWidget>> = vec![
-			Box::new(Button::new("Begin Installation")),
-			Box::new(Button::new("Back")),
-		];
-		let button_row = WidgetBox::button_menu(buttons);
-		let help_content = styled_block(vec![
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "1/2"), (None, " - Switch between System/Disko config")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Scroll config content")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Page Up/Down"), (None, " - Scroll page by page")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Tab"), (None, " - Switch to buttons")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Activate selected button")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Go back to menu")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
-			vec![(None, "")],
-			vec![(None, "Review the generated NixOS configuration before saving.")],
-		]);
-		let help_modal = HelpModal::new("Config Preview", help_content);
-
-
-		Ok(Self {
-			system_config: configs.system,
-			disko_config: configs.disko,
-			_flake_path: configs.flake_path,
-			scroll_position: 0,
-			button_row,
-			current_view: ConfigView::System,
-			help_modal,
-			visible_lines: 10, // Default value, will be updated during rendering
-		})
-	}
+    Ok(Self {
+      system_config: configs.system,
+      disko_config: configs.disko,
+      _flake_path: configs.flake_path,
+      scroll_position: 0,
+      button_row,
+      current_view: ConfigView::System,
+      help_modal,
+      visible_lines: 10, // Default value, will be updated during rendering
+    })
+  }
 }
 
 impl Page for ConfigPreview {
@@ -2948,51 +3176,90 @@ impl Page for ConfigPreview {
 }
 
 pub struct InstallProgress<'a> {
-	_installer: Installer,
-	steps: InstallSteps<'a>,
-	progress_bar: ProgressBar,
-	help_modal: HelpModal<'static>,
-	signal: Option<Signal>,
+  _installer: Installer,
+  steps: InstallSteps<'a>,
+  progress_bar: ProgressBar,
+  help_modal: HelpModal<'static>,
+  signal: Option<Signal>,
 
-	// we only hold onto these to keep them alive during installation
-	_system_cfg: NamedTempFile,
-	_disko_cfg: NamedTempFile,
+  // we only hold onto these to keep them alive during installation
+  _system_cfg: NamedTempFile,
+  _disko_cfg: NamedTempFile,
 }
 
 impl<'a> InstallProgress<'a> {
-	pub fn new(installer: Installer, system_cfg: NamedTempFile, disko_cfg: NamedTempFile) -> anyhow::Result<Self> {
-		let install_steps = Self::install_commands(
-			&installer,
-			system_cfg.path().to_str().ok_or_else(|| anyhow::anyhow!("Invalid system config path"))?.to_string(),
-			disko_cfg.path().to_str().ok_or_else(|| anyhow::anyhow!("Invalid disko config path"))?.to_string(),
-		)?;
-		let steps = InstallSteps::new("Installing NixOS", install_steps);
-		let progress_bar = ProgressBar::new("Progress", 0);
+  pub fn new(
+    installer: Installer,
+    system_cfg: NamedTempFile,
+    disko_cfg: NamedTempFile,
+  ) -> anyhow::Result<Self> {
+    let install_steps = Self::install_commands(
+      &installer,
+      system_cfg
+        .path()
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid system config path"))?
+        .to_string(),
+      disko_cfg
+        .path()
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid disko config path"))?
+        .to_string(),
+    )?;
+    let steps = InstallSteps::new("Installing NixOS", install_steps);
+    let progress_bar = ProgressBar::new("Progress", 0);
 
-		let help_content = styled_block(vec![
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate through installation steps")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Exit installation (if completed)")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
-			vec![(None, "")],
-			vec![(None, "This page shows the progress of the NixOS installation process.")],
-			vec![(None, "Installation steps are executed sequentially and their status is shown above.")],
-		]);
-		let help_modal = HelpModal::new("Installation Progress", help_content);
+    let help_content = styled_block(vec![
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"),
+        (None, " - Navigate through installation steps"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Esc"),
+        (None, " - Exit installation (if completed)"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "?"),
+        (None, " - Show this help"),
+      ],
+      vec![(None, "")],
+      vec![(
+        None,
+        "This page shows the progress of the NixOS installation process.",
+      )],
+      vec![(
+        None,
+        "Installation steps are executed sequentially and their status is shown above.",
+      )],
+    ]);
+    let help_modal = HelpModal::new("Installation Progress", help_content);
 
-		Ok(Self { _installer: installer, steps, progress_bar, help_modal, signal: None, _system_cfg: system_cfg, _disko_cfg: disko_cfg })
-	}
+    Ok(Self {
+      _installer: installer,
+      steps,
+      progress_bar,
+      help_modal,
+      signal: None,
+      _system_cfg: system_cfg,
+      _disko_cfg: disko_cfg,
+    })
+  }
 
-	pub fn is_complete(&self) -> bool {
-		self.steps.is_complete()
-	}
+  pub fn is_complete(&self) -> bool {
+    self.steps.is_complete()
+  }
 
-	pub fn has_error(&self) -> bool {
-		self.steps.has_error()
-	}
+  pub fn has_error(&self) -> bool {
+    self.steps.has_error()
+  }
 
-	/// The actual installation steps
-	fn install_commands(_installer: &Installer, system_cfg_path: String, disk_cfg_path: String) -> anyhow::Result<Vec<(Line<'static>, VecDeque<Command>)>> {
-		Ok(vec![
+  /// The actual installation steps
+  fn install_commands(
+    _installer: &Installer,
+    system_cfg_path: String,
+    disk_cfg_path: String,
+  ) -> anyhow::Result<Vec<(Line<'static>, VecDeque<Command>)>> {
+    Ok(vec![
 			(Line::from("Beginning NixOS Installation..."),
 			 vec![
 				 command!("echo", "Beginning NixOS Installation..."),
@@ -3020,109 +3287,129 @@ impl<'a> InstallProgress<'a> {
 				command!("echo", "Installation complete!")
 			 ].into()),
 		])
-	}
-
+  }
 }
 
 impl<'a> Page for InstallProgress<'a> {
-	fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-		// Tick the steps to update animation and process commands
-		let _ = self.steps.tick();
+  fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
+    // Tick the steps to update animation and process commands
+    let _ = self.steps.tick();
 
-		let chunks = Layout::default()
-			.direction(Direction::Vertical)
-			.margin(1)
-			.constraints(
-				[
-				Constraint::Min(0),
-				Constraint::Length(3),
-				]
-				.as_ref(),
-			)
-			.split(area);
+    let chunks = Layout::default()
+      .direction(Direction::Vertical)
+      .margin(1)
+      .constraints([Constraint::Min(0), Constraint::Length(3)].as_ref())
+      .split(area);
 
-		// Render InstallSteps widget in the main area
-		self.steps.render(f, chunks[0]);
+    // Render InstallSteps widget in the main area
+    self.steps.render(f, chunks[0]);
 
-		// Update progress bar with completion percentage
-		let progress = (self.steps.progress() * 100.0) as u32;
-		if progress == 100 || self.steps.is_complete() {
-			self.signal = Some(Signal::Push(Box::new(InstallComplete::new())));
-		}
-		self.progress_bar.set_progress(progress);
-		self.progress_bar.render(f, chunks[1]);
+    // Update progress bar with completion percentage
+    let progress = (self.steps.progress() * 100.0) as u32;
+    if progress == 100 || self.steps.is_complete() {
+      self.signal = Some(Signal::Push(Box::new(InstallComplete::new())));
+    }
+    self.progress_bar.set_progress(progress);
+    self.progress_bar.render(f, chunks[1]);
 
-		// Help modal
-		self.help_modal.render(f, area);
-	}
+    // Help modal
+    self.help_modal.render(f, area);
+  }
 
-	fn signal(&self) -> Option<Signal> {
-		// This lets us return a signal without any input
-		if let Some(ref signal) = self.signal {
-			match signal {
-				Signal::Wait => Some(Signal::Wait),
-				Signal::Push(_) => Some(Signal::Push(Box::new(InstallComplete::new()))),
-				Signal::Pop => Some(Signal::Pop),
-				Signal::PopCount(n) => Some(Signal::PopCount(*n)),
-				Signal::Quit => Some(Signal::Quit),
-				Signal::WriteCfg => Some(Signal::WriteCfg),
-				Signal::Unwind => Some(Signal::Unwind),
-				Signal::Error(_) => Some(Signal::Wait),
-			}
-		} else {
-			None
-		}
-	}
+  fn signal(&self) -> Option<Signal> {
+    // This lets us return a signal without any input
+    if let Some(ref signal) = self.signal {
+      match signal {
+        Signal::Wait => Some(Signal::Wait),
+        Signal::Push(_) => Some(Signal::Push(Box::new(InstallComplete::new()))),
+        Signal::Pop => Some(Signal::Pop),
+        Signal::PopCount(n) => Some(Signal::PopCount(*n)),
+        Signal::Quit => Some(Signal::Quit),
+        Signal::WriteCfg => Some(Signal::WriteCfg),
+        Signal::Unwind => Some(Signal::Unwind),
+        Signal::Error(_) => Some(Signal::Wait),
+      }
+    } else {
+      None
+    }
+  }
 
-	fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
-		let help_content = styled_block(vec![
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Scroll through command output")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Page Up/Down"), (None, " - Scroll output page by page")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Home/End"), (None, " - Jump to beginning/end of output")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Exit installation (if completed)")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
-			vec![(None, "")],
-			vec![(None, "Watch the progress as NixOS installs. Commands run")],
-			vec![(None, "sequentially and their output is logged above.")],
-		]);
-		("Installation Progress".to_string(), help_content)
-	}
+  fn get_help_content(&self) -> (String, Vec<Line<'_>>) {
+    let help_content = styled_block(vec![
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"),
+        (None, " - Scroll through command output"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Page Up/Down"),
+        (None, " - Scroll output page by page"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Home/End"),
+        (None, " - Jump to beginning/end of output"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Esc"),
+        (None, " - Exit installation (if completed)"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "?"),
+        (None, " - Show this help"),
+      ],
+      vec![(None, "")],
+      vec![(None, "Watch the progress as NixOS installs. Commands run")],
+      vec![(None, "sequentially and their output is logged above.")],
+    ]);
+    ("Installation Progress".to_string(), help_content)
+  }
 
-	fn handle_input(&mut self, _installer: &mut Installer, event: KeyEvent) -> Signal {
-		if event.code == KeyCode::Char('c') && event.modifiers.contains(KeyModifiers::CONTROL) {
-			return Signal::Quit;
-		}
-		if self.has_error() {
-			match event.code {
-				KeyCode::Esc => Signal::Pop,
-				KeyCode::Char('q') => Signal::Pop,
-				_ => Signal::Wait,
-			}
-		} else {
-			Signal::Wait
-		}
-	}
+  fn handle_input(&mut self, _installer: &mut Installer, event: KeyEvent) -> Signal {
+    if event.code == KeyCode::Char('c') && event.modifiers.contains(KeyModifiers::CONTROL) {
+      return Signal::Quit;
+    }
+    if self.has_error() {
+      match event.code {
+        KeyCode::Esc => Signal::Pop,
+        KeyCode::Char('q') => Signal::Pop,
+        _ => Signal::Wait,
+      }
+    } else {
+      Signal::Wait
+    }
+  }
 }
 
 pub struct InstallComplete {
-	text_box: InfoBox<'static>,
+  text_box: InfoBox<'static>,
 }
 
 impl InstallComplete {
-	pub fn new() -> Self {
-		let content = styled_block(vec![
-			vec![(None, "NixOS has been successfully installed on your system!")],
-			vec![(None, "")],
-			vec![(None, "You can now reboot your computer and remove the installation media.")],
-			vec![(None, "")],
-			vec![(None, "The installation remains mounted on /mnt if you wish to perform any manual configuration on the new system.")],
-			vec![(None, "Such manual configuration can be performed using the 'nixos-enter' command.")],
-			vec![(None, "")],
-			vec![(None, "Press any key to exit the installer.")],
-		]);
-		let text_box = InfoBox::new("Installation Complete", content);
-		Self { text_box }
-	}
+  pub fn new() -> Self {
+    let content = styled_block(vec![
+      vec![(
+        None,
+        "NixOS has been successfully installed on your system!",
+      )],
+      vec![(None, "")],
+      vec![(
+        None,
+        "You can now reboot your computer and remove the installation media.",
+      )],
+      vec![(None, "")],
+      vec![(
+        None,
+        "The installation remains mounted on /mnt if you wish to perform any manual configuration on the new system.",
+      )],
+      vec![(
+        None,
+        "Such manual configuration can be performed using the 'nixos-enter' command.",
+      )],
+      vec![(None, "")],
+      vec![(None, "Press any key to exit the installer.")],
+    ]);
+    let text_box = InfoBox::new("Installation Complete", content);
+    Self { text_box }
+  }
 }
 
 impl Default for InstallComplete {
@@ -3132,21 +3419,16 @@ impl Default for InstallComplete {
 }
 
 impl Page for InstallComplete {
-	fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-		let chunks = Layout::default()
-			.direction(Direction::Vertical)
-			.margin(1)
-			.constraints(
-				[
-				Constraint::Percentage(100),
-				]
-				.as_ref(),
-			)
-			.split(area);
-		self.text_box.render(f, chunks[0]);
-	}
+  fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
+    let chunks = Layout::default()
+      .direction(Direction::Vertical)
+      .margin(1)
+      .constraints([Constraint::Percentage(100)].as_ref())
+      .split(area);
+    self.text_box.render(f, chunks[0]);
+  }
 
-	fn handle_input(&mut self, _installer: &mut Installer, _event: KeyEvent) -> Signal {
-		Signal::Quit
-	}
+  fn handle_input(&mut self, _installer: &mut Installer, _event: KeyEvent) -> Signal {
+    Signal::Quit
+  }
 }

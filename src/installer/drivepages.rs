@@ -1,56 +1,125 @@
-use ratatui::{crossterm::event::{KeyCode, KeyEvent}, layout::{Constraint, Direction, Layout, Rect}, style::{Color, Modifier}, Frame};
+use ratatui::{
+  Frame,
+  crossterm::event::{KeyCode, KeyEvent},
+  layout::{Constraint, Direction, Layout, Rect},
+  style::{Color, Modifier},
+};
 use serde_json::Value;
 
 use crate::{drives::{bytes_readable, disk_table, lsblk, parse_sectors, part_table, DiskItem, PartStatus, Partition}, installer::{Installer, Page, Signal}, styled_block, ui_back, ui_close, ui_down, ui_enter, ui_up, widget::{Button, CheckBox, ConfigWidget, HelpModal, InfoBox, LineEditor, TableWidget, WidgetBox}};
 
-const HIGHLIGHT: Option<(Color,Modifier)> = Some((Color::Yellow, Modifier::BOLD));
+const HIGHLIGHT: Option<(Color, Modifier)> = Some((Color::Yellow, Modifier::BOLD));
 
 pub struct Drives<'a> {
-	pub buttons: WidgetBox,
-	pub info_box: InfoBox<'a>,
-	help_modal: HelpModal<'static>,
+  pub buttons: WidgetBox,
+  pub info_box: InfoBox<'a>,
+  help_modal: HelpModal<'static>,
 }
 
 impl<'a> Drives<'a> {
-	pub fn new() -> Self {
-		let buttons = vec![
-			Box::new(Button::new("Use a best-effort default partition layout")) as Box<dyn ConfigWidget>,
-			Box::new(Button::new("Configure partitions manually")) as Box<dyn ConfigWidget>,
-			Box::new(Button::new("Back")) as Box<dyn ConfigWidget>,
-		];
-		let mut button_row = WidgetBox::button_menu(buttons);
-		button_row.focus();
-		let info_box = InfoBox::new(
-			"Drive Configuration",
-			styled_block(vec![
-				vec![(None, "Select how you would like to configure your drives for the NixOS installation.")],
-				vec![(None, "- "), (Some((Color::Green, Modifier::BOLD)), "'Use a best-effort default partition layout'"), (None, " will attempt to automatically partition and format your selected drive with sensible defaults. "), (None, "This is recommended for most users.")],
-				vec![(None, "- "), (Some((Color::Green, Modifier::BOLD)), "'Configure partitions manually'"), (None, " will allow you to specify exactly how your drive should be partitioned and formatted. "), (None, "This is recommended for advanced users who have specific requirements.")],
-				vec![(Some((Color::Red, Modifier::BOLD)), "NOTE: "), (None, "When the installer is run, "), (Some((Color::Red, Modifier::BOLD | Modifier::ITALIC)), " any and all"), (None, " data on the selected drive will be wiped. Make sure you've backed up any important data.")],
-			])
-		);
+  pub fn new() -> Self {
+    let buttons = vec![
+      Box::new(Button::new("Use a best-effort default partition layout")) as Box<dyn ConfigWidget>,
+      Box::new(Button::new("Configure partitions manually")) as Box<dyn ConfigWidget>,
+      Box::new(Button::new("Back")) as Box<dyn ConfigWidget>,
+    ];
+    let mut button_row = WidgetBox::button_menu(buttons);
+    button_row.focus();
+    let info_box = InfoBox::new(
+      "Drive Configuration",
+      styled_block(vec![
+        vec![(
+          None,
+          "Select how you would like to configure your drives for the NixOS installation.",
+        )],
+        vec![
+          (None, "- "),
+          (
+            Some((Color::Green, Modifier::BOLD)),
+            "'Use a best-effort default partition layout'",
+          ),
+          (
+            None,
+            " will attempt to automatically partition and format your selected drive with sensible defaults. ",
+          ),
+          (None, "This is recommended for most users."),
+        ],
+        vec![
+          (None, "- "),
+          (
+            Some((Color::Green, Modifier::BOLD)),
+            "'Configure partitions manually'",
+          ),
+          (
+            None,
+            " will allow you to specify exactly how your drive should be partitioned and formatted. ",
+          ),
+          (
+            None,
+            "This is recommended for advanced users who have specific requirements.",
+          ),
+        ],
+        vec![
+          (Some((Color::Red, Modifier::BOLD)), "NOTE: "),
+          (None, "When the installer is run, "),
+          (
+            Some((Color::Red, Modifier::BOLD | Modifier::ITALIC)),
+            " any and all",
+          ),
+          (
+            None,
+            " data on the selected drive will be wiped. Make sure you've backed up any important data.",
+          ),
+        ],
+      ]),
+    );
 
-		let help_content = styled_block(vec![
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate options")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select drive configuration method")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Return to main menu")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
-			vec![(None, "")],
-			vec![(None, "Choose how to configure your drive for NixOS installation:")],
-			vec![(None, "• Best-effort default - Automatic partitioning (recommended)")],
-			vec![(None, "• Manual configuration - Advanced users only")],
-			vec![(None, "")],
-			vec![(Some((Color::Red, Modifier::BOLD)), "WARNING: "), (None, "All data on the selected drive will be erased!")],
-		]);
-		let help_modal = HelpModal::new("Drive Configuration", help_content);
-		Self { buttons: button_row, info_box, help_modal }
-	}
+    let help_content = styled_block(vec![
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"),
+        (None, " - Navigate options"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Enter"),
+        (None, " - Select drive configuration method"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Esc"),
+        (None, " - Return to main menu"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "?"),
+        (None, " - Show this help"),
+      ],
+      vec![(None, "")],
+      vec![(
+        None,
+        "Choose how to configure your drive for NixOS installation:",
+      )],
+      vec![(
+        None,
+        "• Best-effort default - Automatic partitioning (recommended)",
+      )],
+      vec![(None, "• Manual configuration - Advanced users only")],
+      vec![(None, "")],
+      vec![
+        (Some((Color::Red, Modifier::BOLD)), "WARNING: "),
+        (None, "All data on the selected drive will be erased!"),
+      ],
+    ]);
+    let help_modal = HelpModal::new("Drive Configuration", help_content);
+    Self {
+      buttons: button_row,
+      info_box,
+      help_modal,
+    }
+  }
 }
 
 impl<'a> Default for Drives<'a> {
-	fn default() -> Self {
-		Self::new()
-	}
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl<'a> Page for Drives<'a> {
@@ -140,30 +209,51 @@ impl<'a> Page for Drives<'a> {
 }
 
 pub struct SelectDrive {
-	table: TableWidget,
-	help_modal: HelpModal<'static>,
+  table: TableWidget,
+  help_modal: HelpModal<'static>,
 }
 
 impl SelectDrive {
-	pub fn new(mut table: TableWidget) -> Self {
-		table.focus();
-		let help_content = styled_block(vec![
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate drive list")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select drive for installation")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Return to previous menu")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
-			vec![(None, "")],
-			vec![(None, "Select the drive you want to use for your NixOS installation.")],
-			vec![(None, "The selected drive will be used for partitioning and formatting.")],
-			vec![(Some((Color::Red, Modifier::BOLD)), "WARNING: "), (None, "All data on the selected drive will be erased!")],
-		]);
-		let help_modal = HelpModal::new("Select Drive", help_content);
-		Self { table, help_modal }
-	}
+  pub fn new(mut table: TableWidget) -> Self {
+    table.focus();
+    let help_content = styled_block(vec![
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"),
+        (None, " - Navigate drive list"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Enter"),
+        (None, " - Select drive for installation"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Esc"),
+        (None, " - Return to previous menu"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "?"),
+        (None, " - Show this help"),
+      ],
+      vec![(None, "")],
+      vec![(
+        None,
+        "Select the drive you want to use for your NixOS installation.",
+      )],
+      vec![(
+        None,
+        "The selected drive will be used for partitioning and formatting.",
+      )],
+      vec![
+        (Some((Color::Red, Modifier::BOLD)), "WARNING: "),
+        (None, "All data on the selected drive will be erased!"),
+      ],
+    ]);
+    let help_modal = HelpModal::new("Select Drive", help_content);
+    Self { table, help_modal }
+  }
 }
 
 impl Page for SelectDrive {
-	fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
+  fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
 		self.table.render(f, area);
 
 		// Render help modal on top
@@ -231,289 +321,335 @@ impl Page for SelectDrive {
 }
 
 pub struct SelectFilesystem {
-	pub buttons: WidgetBox,
-	pub dev_id: Option<u64>,
-	help_modal: HelpModal<'static>,
+  pub buttons: WidgetBox,
+  pub dev_id: Option<u64>,
+  help_modal: HelpModal<'static>,
 }
 
 impl SelectFilesystem {
-	pub fn new(dev_id: Option<u64>) -> Self {
-		let buttons = vec![
-			Box::new(Button::new("ext4")) as Box<dyn ConfigWidget>,
-			Box::new(Button::new("ext3")) as Box<dyn ConfigWidget>,
-			Box::new(Button::new("ext2")) as Box<dyn ConfigWidget>,
-			Box::new(Button::new("btrfs")) as Box<dyn ConfigWidget>,
-			Box::new(Button::new("xfs")) as Box<dyn ConfigWidget>,
-			Box::new(Button::new("fat12")) as Box<dyn ConfigWidget>,
-			Box::new(Button::new("fat16")) as Box<dyn ConfigWidget>,
-			Box::new(Button::new("fat32")) as Box<dyn ConfigWidget>,
-			Box::new(Button::new("ntfs")) as Box<dyn ConfigWidget>,
-			Box::new(Button::new("Back")) as Box<dyn ConfigWidget>,
-		];
-		let mut button_row = WidgetBox::button_menu(buttons);
-		button_row.focus();
-		let help_content = styled_block(vec![
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate filesystem options")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select filesystem type")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Return to previous menu")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
-			vec![(None, "")],
-			vec![(None, "Choose the filesystem type for your partition.")],
-			vec![(None, "Different filesystems have different features and performance")],
-			vec![(None, "characteristics. ext4 is recommended for most users.")],
-		]);
-		let help_modal = HelpModal::new("Select Filesystem", help_content);
-		Self { buttons: button_row, dev_id, help_modal }
-	}
-	pub fn get_fs_info<'a>(idx: usize) -> InfoBox<'a> {
-		match idx {
-			0 => InfoBox::new(
-				"ext4",
-				styled_block(vec![
-					vec![
-						(HIGHLIGHT, "ext4"),
-						(None, " is a"),
-						(HIGHLIGHT, " widely used and stable filesystem"),
-						(None, " known for its "),
-						(HIGHLIGHT, "reliability and performance.")
-					],
-					vec![
-						(None, "It supports "),
-						(HIGHLIGHT, "journaling"),
-						(None, ", which helps "),
-						(HIGHLIGHT, "protect against data corruption "),
-						(None, "in case of crashes.")
-					],
-					vec![
-						(None, "It's a good choice for"),
-						(HIGHLIGHT, " general-purpose"),
-						(None, " use and is"),
-						(HIGHLIGHT, " well-supported across various Linux distributions.")
-					],
-				])
-			),
-			1 => InfoBox::new(
-				"ext3",
-				styled_block(vec![
-					vec![
-						(HIGHLIGHT, "ext3"),
-						(None, " is an older journaling filesystem that builds upon ext2."),
-					],
-					vec![
-						(None, "It provides "),
-						(HIGHLIGHT, "journaling"),
-						(None, " capabilities to improve data integrity and recovery after crashes."),
-					],
-					vec![
-						(None, "While it is "),
-						(HIGHLIGHT, "reliable and stable"),
-						(None, ", it lacks some of the performance and features of ext4."),
-					],
-				])
-			),
-			2 => InfoBox::new(
-				"ext2",
-				styled_block(vec![
-					vec![
-						(HIGHLIGHT, "ext2"),
-						(None, " is a non-journaling filesystem that is simple and efficient."),
-					],
-					vec![
-						(None, "It is suitable for use cases where "),
-						(HIGHLIGHT, "journaling is not required"),
-						(None, ", such as "),
-						(HIGHLIGHT, "flash drives"),
-						(None, " or "),
-						(HIGHLIGHT, "small partitions"),
-						(None, "."),
-					],
-					vec![
-						(None, "However, it is more "),
-						(HIGHLIGHT, "prone to data corruption "),
-						(None, "in case of crashes compared to ext3 and ext4."),
-					],
-				])
-			),
-			3 => InfoBox::new(
-				"btrfs",
-				styled_block(vec![
-					vec![
-						(HIGHLIGHT, "btrfs"),
-						(None, " ("),
-						(Some((Color::Reset, Modifier::ITALIC)), "B-tree filesystem"),
-						(None, ") is a "),
-						(HIGHLIGHT, "modern filesystem"),
-						(None, " that offers advanced features like "),
-						(HIGHLIGHT, "snapshots"),
-						(None, ", "),
-						(HIGHLIGHT, "subvolumes"),
-						(None, ", and "),
-						(HIGHLIGHT, "built-in RAID support"),
-						(None, "."),
-					],
-					vec![
-						(None, "It is designed for "),
-						(HIGHLIGHT, "scalability"),
-						(None, " and "),
-						(HIGHLIGHT, "flexibility"),
-						(None, ", making it suitable for systems that require "),
-						(HIGHLIGHT, "complex storage solutions."),
-					],
-					vec![
-						(None, "However, it may not be as mature as "),
-						(HIGHLIGHT, "ext4"),
-						(None, " in terms of "),
-						(HIGHLIGHT, "stability"),
-						(None, " for all use cases."),
-					],
-				])
-			),
-			4 => InfoBox::new(
-				"xfs",
-				styled_block(vec![
-					vec![
-						(HIGHLIGHT, "XFS"),
-						(None, " is a "),
-						(HIGHLIGHT, "high-performance journaling filesystem"),
-						(None, " that excels in handling "),
-						(HIGHLIGHT, "large files"),
-						(None, " and "),
-						(HIGHLIGHT, "high I/O workloads"),
-						(None, "."),
-					],
-					vec![
-						(None, "It is known for its "),
-						(HIGHLIGHT, "scalability"),
-						(None, " and "),
-						(HIGHLIGHT, "robustness"),
-						(None, ", making it a popular choice for "),
-						(HIGHLIGHT, "enterprise environments"),
-						(None, "."),
-					],
-					vec![
-						(HIGHLIGHT, "XFS"),
-						(None, " is particularly well-suited for systems that require efficient handling of "),
-						(HIGHLIGHT, "large datasets"),
-						(None, "."),
-					],
-				])
-			),
-			5 => InfoBox::new(
-				"fat12",
-				styled_block(vec![
-					vec![
-						(HIGHLIGHT, "FAT12"),
-						(None, " is a "),
-						(HIGHLIGHT, "simple "),
-						(None, "and "),
-						(HIGHLIGHT, "widely supported "),
-						(None, "filesystem primarily used for "),
-						(HIGHLIGHT, "small storage devices"),
-						(None, " like floppy disks."),
-					],
-					vec![
-						(None, "It has "),
-						(HIGHLIGHT, "limitations "),
-						(None, "in terms of "),
-						(HIGHLIGHT, "maximum partition size "),
-						(None, "and file size, making it "),
-						(HIGHLIGHT, "less suitable for modern systems"),
-						(None, "."),
-					],
-				])
-			),
-			6 => InfoBox::new(
-				"fat16",
-				styled_block(vec![
-					vec![
-						(HIGHLIGHT, "FAT16"),
-						(None, " is an older filesystem that "),
-						(HIGHLIGHT, "extends FAT12"),
-						(None, " to support "),
-						(HIGHLIGHT, "larger partitions and files."),
-					],
-					vec![
-						(None, "It is still used in some "),
-						(HIGHLIGHT, "embedded systems "),
-						(None, "and "),
-						(HIGHLIGHT, "older devices "),
-						(None, "but has "),
-						(HIGHLIGHT, "limitations compared to more modern filesystems"), (None, "."),
-					],
-				])
-			),
-			7 => InfoBox::new(
-				"fat32",
-				styled_block(vec![
-					vec![
-					(HIGHLIGHT, "FAT32"),
-					(None, " is a widely supported filesystem that can handle"),
-					(HIGHLIGHT, " larger partitions and files than FAT16"), (None, "."),
-					],
-					vec![
-					(None, "It is commonly used for USB drives and memory cards due to its broad "),
-					(HIGHLIGHT, "cross-platform compatibility"),
-					(None, "."),
-					],
-					vec![
-					(None, "FAT32 is also commonly used for "),
-					(HIGHLIGHT, "EFI System Partitions (ESP)"),
-					(None, " on UEFI systems, allowing the firmware to load the bootloader."),
-					],
-					vec![
-					(None, "However, it has limitations such as a "),
-					(HIGHLIGHT, "maximum file size of 4GB"),
-					(None, " and"),
-					(HIGHLIGHT, " lack of modern journaling features."),
-					],
-				])
-			),
-			8 => InfoBox::new(
-				"ntfs",
-				styled_block(vec![
-					vec![
-						(HIGHLIGHT, "NTFS"),
-						(None, " is a"),
-						(HIGHLIGHT, " robust"),
-						(None, " and"),
-						(HIGHLIGHT, " feature-rich"),
-						(None, " filesystem developed by Microsoft."),
-					],
-					vec![
-						(None, "It supports "),
-						(HIGHLIGHT, "large files"),
-						(None, ", "),
-						(HIGHLIGHT, "advanced permissions"),
-						(None, ", "),
-						(HIGHLIGHT, "encryption"),
-						(None, ", and "),
-						(HIGHLIGHT, "journaling"),
-						(None, "."),
-					],
-					vec![
-						(None, "While it is"),
-						(HIGHLIGHT, " primarily used in Windows environments"),
-						(None, ", Linux has good support for NTFS through the "),
-						(HIGHLIGHT, "ntfs-3g"),
-						(None, " driver."),
-					],
-					vec![
-						(None, "NTFS is a good choice if you need to "),
-						(HIGHLIGHT, "share data between Windows and Linux systems "),
-						(None, "or if you require features like "),
-						(HIGHLIGHT, "file compression and encryption"),
-						(None, "."),
-					],
-				])
-			),
-			_ => InfoBox::new(
-				"Unknown Filesystem",
-				styled_block(vec![
-					vec![(None, "No information available for this filesystem.")],
-				])
-			),
-		}
-	}
+  pub fn new(dev_id: Option<u64>) -> Self {
+    let buttons = vec![
+      Box::new(Button::new("ext4")) as Box<dyn ConfigWidget>,
+      Box::new(Button::new("ext3")) as Box<dyn ConfigWidget>,
+      Box::new(Button::new("ext2")) as Box<dyn ConfigWidget>,
+      Box::new(Button::new("btrfs")) as Box<dyn ConfigWidget>,
+      Box::new(Button::new("xfs")) as Box<dyn ConfigWidget>,
+      Box::new(Button::new("fat12")) as Box<dyn ConfigWidget>,
+      Box::new(Button::new("fat16")) as Box<dyn ConfigWidget>,
+      Box::new(Button::new("fat32")) as Box<dyn ConfigWidget>,
+      Box::new(Button::new("ntfs")) as Box<dyn ConfigWidget>,
+      Box::new(Button::new("Back")) as Box<dyn ConfigWidget>,
+    ];
+    let mut button_row = WidgetBox::button_menu(buttons);
+    button_row.focus();
+    let help_content = styled_block(vec![
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"),
+        (None, " - Navigate filesystem options"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Enter"),
+        (None, " - Select filesystem type"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Esc"),
+        (None, " - Return to previous menu"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "?"),
+        (None, " - Show this help"),
+      ],
+      vec![(None, "")],
+      vec![(None, "Choose the filesystem type for your partition.")],
+      vec![(
+        None,
+        "Different filesystems have different features and performance",
+      )],
+      vec![(None, "characteristics. ext4 is recommended for most users.")],
+    ]);
+    let help_modal = HelpModal::new("Select Filesystem", help_content);
+    Self {
+      buttons: button_row,
+      dev_id,
+      help_modal,
+    }
+  }
+  pub fn get_fs_info<'a>(idx: usize) -> InfoBox<'a> {
+    match idx {
+      0 => InfoBox::new(
+        "ext4",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "ext4"),
+            (None, " is a"),
+            (HIGHLIGHT, " widely used and stable filesystem"),
+            (None, " known for its "),
+            (HIGHLIGHT, "reliability and performance."),
+          ],
+          vec![
+            (None, "It supports "),
+            (HIGHLIGHT, "journaling"),
+            (None, ", which helps "),
+            (HIGHLIGHT, "protect against data corruption "),
+            (None, "in case of crashes."),
+          ],
+          vec![
+            (None, "It's a good choice for"),
+            (HIGHLIGHT, " general-purpose"),
+            (None, " use and is"),
+            (
+              HIGHLIGHT,
+              " well-supported across various Linux distributions.",
+            ),
+          ],
+        ]),
+      ),
+      1 => InfoBox::new(
+        "ext3",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "ext3"),
+            (
+              None,
+              " is an older journaling filesystem that builds upon ext2.",
+            ),
+          ],
+          vec![
+            (None, "It provides "),
+            (HIGHLIGHT, "journaling"),
+            (
+              None,
+              " capabilities to improve data integrity and recovery after crashes.",
+            ),
+          ],
+          vec![
+            (None, "While it is "),
+            (HIGHLIGHT, "reliable and stable"),
+            (
+              None,
+              ", it lacks some of the performance and features of ext4.",
+            ),
+          ],
+        ]),
+      ),
+      2 => InfoBox::new(
+        "ext2",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "ext2"),
+            (
+              None,
+              " is a non-journaling filesystem that is simple and efficient.",
+            ),
+          ],
+          vec![
+            (None, "It is suitable for use cases where "),
+            (HIGHLIGHT, "journaling is not required"),
+            (None, ", such as "),
+            (HIGHLIGHT, "flash drives"),
+            (None, " or "),
+            (HIGHLIGHT, "small partitions"),
+            (None, "."),
+          ],
+          vec![
+            (None, "However, it is more "),
+            (HIGHLIGHT, "prone to data corruption "),
+            (None, "in case of crashes compared to ext3 and ext4."),
+          ],
+        ]),
+      ),
+      3 => InfoBox::new(
+        "btrfs",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "btrfs"),
+            (None, " ("),
+            (Some((Color::Reset, Modifier::ITALIC)), "B-tree filesystem"),
+            (None, ") is a "),
+            (HIGHLIGHT, "modern filesystem"),
+            (None, " that offers advanced features like "),
+            (HIGHLIGHT, "snapshots"),
+            (None, ", "),
+            (HIGHLIGHT, "subvolumes"),
+            (None, ", and "),
+            (HIGHLIGHT, "built-in RAID support"),
+            (None, "."),
+          ],
+          vec![
+            (None, "It is designed for "),
+            (HIGHLIGHT, "scalability"),
+            (None, " and "),
+            (HIGHLIGHT, "flexibility"),
+            (None, ", making it suitable for systems that require "),
+            (HIGHLIGHT, "complex storage solutions."),
+          ],
+          vec![
+            (None, "However, it may not be as mature as "),
+            (HIGHLIGHT, "ext4"),
+            (None, " in terms of "),
+            (HIGHLIGHT, "stability"),
+            (None, " for all use cases."),
+          ],
+        ]),
+      ),
+      4 => InfoBox::new(
+        "xfs",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "XFS"),
+            (None, " is a "),
+            (HIGHLIGHT, "high-performance journaling filesystem"),
+            (None, " that excels in handling "),
+            (HIGHLIGHT, "large files"),
+            (None, " and "),
+            (HIGHLIGHT, "high I/O workloads"),
+            (None, "."),
+          ],
+          vec![
+            (None, "It is known for its "),
+            (HIGHLIGHT, "scalability"),
+            (None, " and "),
+            (HIGHLIGHT, "robustness"),
+            (None, ", making it a popular choice for "),
+            (HIGHLIGHT, "enterprise environments"),
+            (None, "."),
+          ],
+          vec![
+            (HIGHLIGHT, "XFS"),
+            (
+              None,
+              " is particularly well-suited for systems that require efficient handling of ",
+            ),
+            (HIGHLIGHT, "large datasets"),
+            (None, "."),
+          ],
+        ]),
+      ),
+      5 => InfoBox::new(
+        "fat12",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "FAT12"),
+            (None, " is a "),
+            (HIGHLIGHT, "simple "),
+            (None, "and "),
+            (HIGHLIGHT, "widely supported "),
+            (None, "filesystem primarily used for "),
+            (HIGHLIGHT, "small storage devices"),
+            (None, " like floppy disks."),
+          ],
+          vec![
+            (None, "It has "),
+            (HIGHLIGHT, "limitations "),
+            (None, "in terms of "),
+            (HIGHLIGHT, "maximum partition size "),
+            (None, "and file size, making it "),
+            (HIGHLIGHT, "less suitable for modern systems"),
+            (None, "."),
+          ],
+        ]),
+      ),
+      6 => InfoBox::new(
+        "fat16",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "FAT16"),
+            (None, " is an older filesystem that "),
+            (HIGHLIGHT, "extends FAT12"),
+            (None, " to support "),
+            (HIGHLIGHT, "larger partitions and files."),
+          ],
+          vec![
+            (None, "It is still used in some "),
+            (HIGHLIGHT, "embedded systems "),
+            (None, "and "),
+            (HIGHLIGHT, "older devices "),
+            (None, "but has "),
+            (HIGHLIGHT, "limitations compared to more modern filesystems"),
+            (None, "."),
+          ],
+        ]),
+      ),
+      7 => InfoBox::new(
+        "fat32",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "FAT32"),
+            (None, " is a widely supported filesystem that can handle"),
+            (HIGHLIGHT, " larger partitions and files than FAT16"),
+            (None, "."),
+          ],
+          vec![
+            (
+              None,
+              "It is commonly used for USB drives and memory cards due to its broad ",
+            ),
+            (HIGHLIGHT, "cross-platform compatibility"),
+            (None, "."),
+          ],
+          vec![
+            (None, "FAT32 is also commonly used for "),
+            (HIGHLIGHT, "EFI System Partitions (ESP)"),
+            (
+              None,
+              " on UEFI systems, allowing the firmware to load the bootloader.",
+            ),
+          ],
+          vec![
+            (None, "However, it has limitations such as a "),
+            (HIGHLIGHT, "maximum file size of 4GB"),
+            (None, " and"),
+            (HIGHLIGHT, " lack of modern journaling features."),
+          ],
+        ]),
+      ),
+      8 => InfoBox::new(
+        "ntfs",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "NTFS"),
+            (None, " is a"),
+            (HIGHLIGHT, " robust"),
+            (None, " and"),
+            (HIGHLIGHT, " feature-rich"),
+            (None, " filesystem developed by Microsoft."),
+          ],
+          vec![
+            (None, "It supports "),
+            (HIGHLIGHT, "large files"),
+            (None, ", "),
+            (HIGHLIGHT, "advanced permissions"),
+            (None, ", "),
+            (HIGHLIGHT, "encryption"),
+            (None, ", and "),
+            (HIGHLIGHT, "journaling"),
+            (None, "."),
+          ],
+          vec![
+            (None, "While it is"),
+            (HIGHLIGHT, " primarily used in Windows environments"),
+            (None, ", Linux has good support for NTFS through the "),
+            (HIGHLIGHT, "ntfs-3g"),
+            (None, " driver."),
+          ],
+          vec![
+            (None, "NTFS is a good choice if you need to "),
+            (HIGHLIGHT, "share data between Windows and Linux systems "),
+            (None, "or if you require features like "),
+            (HIGHLIGHT, "file compression and encryption"),
+            (None, "."),
+          ],
+        ]),
+      ),
+      _ => InfoBox::new(
+        "Unknown Filesystem",
+        styled_block(vec![vec![(
+          None,
+          "No information available for this filesystem.",
+        )]]),
+      ),
+    }
+  }
 }
 
 impl Page for SelectFilesystem {
@@ -633,36 +769,62 @@ impl Page for SelectFilesystem {
 }
 
 pub struct ManualPartition {
-	disk_config: TableWidget,
-	buttons: WidgetBox,
-	confirming_reset: bool,
-	help_modal: HelpModal<'static>,
+  disk_config: TableWidget,
+  buttons: WidgetBox,
+  confirming_reset: bool,
+  help_modal: HelpModal<'static>,
 }
 
 impl ManualPartition {
-	pub fn new(mut disk_config: TableWidget) -> Self {
-		let buttons = vec![
-			Box::new(Button::new("Suggest Partition Layout")) as Box<dyn ConfigWidget>,
-			Box::new(Button::new("Confirm and Exit")) as Box<dyn ConfigWidget>,
-			Box::new(Button::new("Reset Partition Layout")) as Box<dyn ConfigWidget>,
-			Box::new(Button::new("Abort")) as Box<dyn ConfigWidget>,
-		];
-		let buttons = WidgetBox::button_menu(buttons);
-		disk_config.focus();
-		let help_content = styled_block(vec![
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate partitions and buttons")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Tab"), (None, " - Switch between partition table and buttons")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select partition or button action")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Return to previous menu")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
-			vec![(None, "")],
-			vec![(None, "Manually configure drive partitions. Select partitions to")],
-			vec![(None, "modify them or select free space to create new partitions.")],
-			vec![(None, "Use buttons at bottom for additional actions.")],
-		]);
-		let help_modal = HelpModal::new("Manual Partitioning", help_content);
-		Self { disk_config, buttons, confirming_reset: false, help_modal }
-	}
+  pub fn new(mut disk_config: TableWidget) -> Self {
+    let buttons = vec![
+      Box::new(Button::new("Suggest Partition Layout")) as Box<dyn ConfigWidget>,
+      Box::new(Button::new("Confirm and Exit")) as Box<dyn ConfigWidget>,
+      Box::new(Button::new("Reset Partition Layout")) as Box<dyn ConfigWidget>,
+      Box::new(Button::new("Abort")) as Box<dyn ConfigWidget>,
+    ];
+    let buttons = WidgetBox::button_menu(buttons);
+    disk_config.focus();
+    let help_content = styled_block(vec![
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"),
+        (None, " - Navigate partitions and buttons"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Tab"),
+        (None, " - Switch between partition table and buttons"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Enter"),
+        (None, " - Select partition or button action"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Esc"),
+        (None, " - Return to previous menu"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "?"),
+        (None, " - Show this help"),
+      ],
+      vec![(None, "")],
+      vec![(
+        None,
+        "Manually configure drive partitions. Select partitions to",
+      )],
+      vec![(
+        None,
+        "modify them or select free space to create new partitions.",
+      )],
+      vec![(None, "Use buttons at bottom for additional actions.")],
+    ]);
+    let help_modal = HelpModal::new("Manual Partitioning", help_content);
+    Self {
+      disk_config,
+      buttons,
+      confirming_reset: false,
+      help_modal,
+    }
+  }
 }
 
 impl Page for ManualPartition {
@@ -874,37 +1036,58 @@ impl Page for ManualPartition {
 }
 
 pub struct SuggestPartition {
-	buttons: WidgetBox,
-	help_modal: HelpModal<'static>,
+  buttons: WidgetBox,
+  help_modal: HelpModal<'static>,
 }
 
 impl SuggestPartition {
-	pub fn new() -> Self {
-		let buttons = vec![
-			Box::new(Button::new("Yes")) as Box<dyn ConfigWidget>,
-			Box::new(Button::new("No")) as Box<dyn ConfigWidget>,
-		];
-		let mut button_row = WidgetBox::button_menu(buttons);
-		button_row.focus();
-		let help_content = styled_block(vec![
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate yes/no options")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Confirm selection")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Cancel and return")],
-			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
-			vec![(None, "")],
-			vec![(None, "Confirm whether to use a suggested partition layout.")],
-			vec![(None, "This will create a standard boot and root partition setup.")],
-			vec![(Some((Color::Red, Modifier::BOLD)), "WARNING: "), (None, "All existing data will be erased!")],
-		]);
-		let help_modal = HelpModal::new("Suggest Partition Layout", help_content);
-		Self { buttons: button_row, help_modal }
-	}
+  pub fn new() -> Self {
+    let buttons = vec![
+      Box::new(Button::new("Yes")) as Box<dyn ConfigWidget>,
+      Box::new(Button::new("No")) as Box<dyn ConfigWidget>,
+    ];
+    let mut button_row = WidgetBox::button_menu(buttons);
+    button_row.focus();
+    let help_content = styled_block(vec![
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"),
+        (None, " - Navigate yes/no options"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Enter"),
+        (None, " - Confirm selection"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "Esc"),
+        (None, " - Cancel and return"),
+      ],
+      vec![
+        (Some((Color::Yellow, Modifier::BOLD)), "?"),
+        (None, " - Show this help"),
+      ],
+      vec![(None, "")],
+      vec![(None, "Confirm whether to use a suggested partition layout.")],
+      vec![(
+        None,
+        "This will create a standard boot and root partition setup.",
+      )],
+      vec![
+        (Some((Color::Red, Modifier::BOLD)), "WARNING: "),
+        (None, "All existing data will be erased!"),
+      ],
+    ]);
+    let help_modal = HelpModal::new("Suggest Partition Layout", help_content);
+    Self {
+      buttons: button_row,
+      help_modal,
+    }
+  }
 }
 
 impl Default for SuggestPartition {
-		fn default() -> Self {
-				Self::new()
-		}
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl Page for SuggestPartition {
@@ -1012,20 +1195,20 @@ impl Page for SuggestPartition {
 }
 
 pub struct NewPartition {
-	pub fs_id: u64,
-	pub part_start: u64,
-	pub part_end: u64,
-	pub sector_size: u64,
-	pub total_size: u64, // sectors
+  pub fs_id: u64,
+  pub part_start: u64,
+  pub part_end: u64,
+  pub sector_size: u64,
+  pub total_size: u64, // sectors
 
-	pub new_part_size: Option<u64>, // sectors
-	pub size_input: LineEditor,
+  pub new_part_size: Option<u64>, // sectors
+  pub size_input: LineEditor,
 
-	pub new_part_fs: Option<String>,
-	pub fs_buttons: WidgetBox,
+  pub new_part_fs: Option<String>,
+  pub fs_buttons: WidgetBox,
 
-	pub new_part_mount_point: Option<String>,
-	pub mount_input: LineEditor,
+  pub new_part_mount_point: Option<String>,
+  pub mount_input: LineEditor,
 }
 
 impl NewPartition {
@@ -1308,155 +1491,206 @@ impl NewPartition {
 }
 
 impl Page for NewPartition {
-	fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-		if self.new_part_size.is_none() {
-			self.render_size_input(f, area);
-
-		} else if self.new_part_fs.is_none() {
-			self.render_fs_select(f, area);
-
-		} else if self.new_part_mount_point.is_none() {
-			self.render_mount_point_input(f, area);
-		}
-	}
-	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
-		if self.new_part_size.is_none() {
-			self.handle_input_size(installer, event)
-
-		} else if self.new_part_fs.is_none() {
-			self.handle_input_fs_select(installer, event)
-
-		} else if self.new_part_mount_point.is_none() {
-			self.handle_input_mount_point(installer, event)
-
-		} else {
-			Signal::Pop
-		}
-	}
+  fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
+    if self.new_part_size.is_none() {
+      self.render_size_input(f, area);
+    } else if self.new_part_fs.is_none() {
+      self.render_fs_select(f, area);
+    } else if self.new_part_mount_point.is_none() {
+      self.render_mount_point_input(f, area);
+    }
+  }
+  fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
+    if self.new_part_size.is_none() {
+      self.handle_input_size(installer, event)
+    } else if self.new_part_fs.is_none() {
+      self.handle_input_fs_select(installer, event)
+    } else if self.new_part_mount_point.is_none() {
+      self.handle_input_mount_point(installer, event)
+    } else {
+      Signal::Pop
+    }
+  }
 }
 
 pub struct AlterPartition {
-	pub buttons: WidgetBox,
-	pub part_id: u64,
-	pub part_status: PartStatus,
+  pub buttons: WidgetBox,
+  pub part_id: u64,
+  pub part_status: PartStatus,
 }
 
 impl AlterPartition {
-	pub fn new(part: Partition) -> Self {
-		let part_status = part.status();
-		let buttons = Self::buttons_by_status(*part_status, part.flags());
-		let mut button_row = WidgetBox::button_menu(buttons);
-		button_row.focus();
-		Self { buttons: button_row, part_id: part.id(), part_status: *part_status }
-	}
-	pub fn buttons_by_status(status: PartStatus, flags: &[String]) -> Vec<Box<dyn ConfigWidget>> {
-		match status {
-			PartStatus::Exists => vec![
-				Box::new(Button::new("Set Mount Point")),
-				Box::new(Button::new("Mark For Modification (data will be wiped on install)")),
-				Box::new(Button::new("Delete Partition")),
-				Box::new(Button::new("Back")),
-			],
-			PartStatus::Modify => vec![
-				Box::new(Button::new("Set Mount Point")),
-				Box::new(CheckBox::new("Mark as bootable partition", flags.contains(&"boot".into()))),
-				Box::new(CheckBox::new("Mark as ESP partition", flags.contains(&"esp".into()))),
-				Box::new(CheckBox::new("Mark as XBOOTLDR partition", flags.contains(&"bls_boot".into()))),
-				Box::new(Button::new("Change Filesystem")),
-				Box::new(Button::new("Set Label")),
-				Box::new(Button::new("Unmark for modification")),
-				Box::new(Button::new("Delete Partition")),
-				Box::new(Button::new("Back")),
-			],
-			PartStatus::Create => vec![
-				Box::new(Button::new("Set Mount Point")),
-				Box::new(CheckBox::new("Mark as bootable partition", flags.contains(&"boot".into()))),
-				Box::new(CheckBox::new("Mark as ESP partition", flags.contains(&"esp".into()))),
-				Box::new(CheckBox::new("Mark as XBOOTLDR partition", flags.contains(&"bls_boot".into()))),
-				Box::new(Button::new("Change Filesystem")),
-				Box::new(Button::new("Set Label")),
-				Box::new(Button::new("Delete Partition")),
-				Box::new(Button::new("Back")),
-			],
-			_ => vec![
-				Box::new(Button::new("Back")),
-			],
-		}
-	}
-	pub fn render_existing_part(&self, f: &mut Frame, area: Rect) {
-		let chunks = Layout::default()
-			.direction(Direction::Vertical)
-			.margin(2)
-			.constraints(
-				[
-					Constraint::Percentage(70),
-					Constraint::Percentage(30),
-				]
-				.as_ref(),
-			)
-			.split(area);
+  pub fn new(part: Partition) -> Self {
+    let part_status = part.status();
+    let buttons = Self::buttons_by_status(*part_status, part.flags());
+    let mut button_row = WidgetBox::button_menu(buttons);
+    button_row.focus();
+    Self {
+      buttons: button_row,
+      part_id: part.id(),
+      part_status: *part_status,
+    }
+  }
+  pub fn buttons_by_status(status: PartStatus, flags: &[String]) -> Vec<Box<dyn ConfigWidget>> {
+    match status {
+      PartStatus::Exists => vec![
+        Box::new(Button::new("Set Mount Point")),
+        Box::new(Button::new(
+          "Mark For Modification (data will be wiped on install)",
+        )),
+        Box::new(Button::new("Delete Partition")),
+        Box::new(Button::new("Back")),
+      ],
+      PartStatus::Modify => vec![
+        Box::new(Button::new("Set Mount Point")),
+        Box::new(CheckBox::new(
+          "Mark as bootable partition",
+          flags.contains(&"boot".into()),
+        )),
+        Box::new(CheckBox::new(
+          "Mark as ESP partition",
+          flags.contains(&"esp".into()),
+        )),
+        Box::new(CheckBox::new(
+          "Mark as XBOOTLDR partition",
+          flags.contains(&"bls_boot".into()),
+        )),
+        Box::new(Button::new("Change Filesystem")),
+        Box::new(Button::new("Set Label")),
+        Box::new(Button::new("Unmark for modification")),
+        Box::new(Button::new("Delete Partition")),
+        Box::new(Button::new("Back")),
+      ],
+      PartStatus::Create => vec![
+        Box::new(Button::new("Set Mount Point")),
+        Box::new(CheckBox::new(
+          "Mark as bootable partition",
+          flags.contains(&"boot".into()),
+        )),
+        Box::new(CheckBox::new(
+          "Mark as ESP partition",
+          flags.contains(&"esp".into()),
+        )),
+        Box::new(CheckBox::new(
+          "Mark as XBOOTLDR partition",
+          flags.contains(&"bls_boot".into()),
+        )),
+        Box::new(Button::new("Change Filesystem")),
+        Box::new(Button::new("Set Label")),
+        Box::new(Button::new("Delete Partition")),
+        Box::new(Button::new("Back")),
+      ],
+      _ => vec![Box::new(Button::new("Back"))],
+    }
+  }
+  pub fn render_existing_part(&self, f: &mut Frame, area: Rect) {
+    let chunks = Layout::default()
+      .direction(Direction::Vertical)
+      .margin(2)
+      .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
+      .split(area);
 
-		let info_box = InfoBox::new(
-			"Alter Existing Partition",
-			styled_block(vec![
-				vec![(None, "Choose an action to perform on the selected partition.")],
-				vec![(None, "- "), (Some((Color::Green, Modifier::BOLD)), "'Set Mount Point'"), (None, " allows you to specify where this partition will be mounted in the filesystem.")],
-				vec![(None, "- "), (Some((Color::Green, Modifier::BOLD)), "'Mark For Modification'"), (None, " will flag this partition to be reformatted during installation (all data will be lost on installation). Partitions marked for modification have more options available in this menu.")],
-				vec![(None, "- "), (Some((Color::Green, Modifier::BOLD)), "'Delete Partition'"), (None, " Mark this existing partition for deletion. The space it occupies will be freed for replacement.")],
-				vec![(None, "- "), (Some((Color::Green, Modifier::BOLD)), "'Back'"), (None, " return to the previous menu without making changes.")],
-			])
-		);
-		info_box.render(f, chunks[0]);
-		self.buttons.render(f, chunks[1]);
-	}
-	pub fn render_modify_part(&self, f: &mut Frame, area: Rect) {
-		let chunks = Layout::default()
-			.direction(Direction::Vertical)
-			.margin(2)
-			.constraints(
-				[
-					Constraint::Percentage(70),
-					Constraint::Percentage(30),
-				]
-				.as_ref(),
-			)
-			.split(area);
+    let info_box = InfoBox::new(
+      "Alter Existing Partition",
+      styled_block(vec![
+        vec![(
+          None,
+          "Choose an action to perform on the selected partition.",
+        )],
+        vec![
+          (None, "- "),
+          (Some((Color::Green, Modifier::BOLD)), "'Set Mount Point'"),
+          (
+            None,
+            " allows you to specify where this partition will be mounted in the filesystem.",
+          ),
+        ],
+        vec![
+          (None, "- "),
+          (
+            Some((Color::Green, Modifier::BOLD)),
+            "'Mark For Modification'",
+          ),
+          (
+            None,
+            " will flag this partition to be reformatted during installation (all data will be lost on installation). Partitions marked for modification have more options available in this menu.",
+          ),
+        ],
+        vec![
+          (None, "- "),
+          (Some((Color::Green, Modifier::BOLD)), "'Delete Partition'"),
+          (
+            None,
+            " Mark this existing partition for deletion. The space it occupies will be freed for replacement.",
+          ),
+        ],
+        vec![
+          (None, "- "),
+          (Some((Color::Green, Modifier::BOLD)), "'Back'"),
+          (None, " return to the previous menu without making changes."),
+        ],
+      ]),
+    );
+    info_box.render(f, chunks[0]);
+    self.buttons.render(f, chunks[1]);
+  }
+  pub fn render_modify_part(&self, f: &mut Frame, area: Rect) {
+    let chunks = Layout::default()
+      .direction(Direction::Vertical)
+      .margin(2)
+      .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
+      .split(area);
 
-		let info_box = InfoBox::new(
-			"Alter Partition (Marked for Modification)",
-			styled_block(vec![
-				vec![(None, "This partition is marked for modification. You can change its mount point or delete it.")],
-				vec![(None, "- "), (Some((Color::Green, Modifier::BOLD)), "'Set Mount Point'"), (None, " allows you to specify where this partition will be mounted in the filesystem.")],
-				vec![(None, "- "), (Some((Color::Green, Modifier::BOLD)), "'Delete Partition'"), (None, " will remove this partition from the configuration.")],
-				vec![(None, "- "), (Some((Color::Green, Modifier::BOLD)), "'Back'"), (None, " return to the previous menu without making changes.")],
-			])
-		);
-		info_box.render(f, chunks[0]);
-		self.buttons.render(f, chunks[1]);
-	}
-	pub fn render_delete_part(&self, f: &mut Frame, area: Rect) {
-		let chunks = Layout::default()
-			.direction(Direction::Vertical)
-			.margin(2)
-			.constraints(
-				[
-					Constraint::Percentage(70),
-					Constraint::Percentage(30),
-				]
-				.as_ref(),
-			)
-			.split(area);
+    let info_box = InfoBox::new(
+      "Alter Partition (Marked for Modification)",
+      styled_block(vec![
+        vec![(
+          None,
+          "This partition is marked for modification. You can change its mount point or delete it.",
+        )],
+        vec![
+          (None, "- "),
+          (Some((Color::Green, Modifier::BOLD)), "'Set Mount Point'"),
+          (
+            None,
+            " allows you to specify where this partition will be mounted in the filesystem.",
+          ),
+        ],
+        vec![
+          (None, "- "),
+          (Some((Color::Green, Modifier::BOLD)), "'Delete Partition'"),
+          (None, " will remove this partition from the configuration."),
+        ],
+        vec![
+          (None, "- "),
+          (Some((Color::Green, Modifier::BOLD)), "'Back'"),
+          (None, " return to the previous menu without making changes."),
+        ],
+      ]),
+    );
+    info_box.render(f, chunks[0]);
+    self.buttons.render(f, chunks[1]);
+  }
+  pub fn render_delete_part(&self, f: &mut Frame, area: Rect) {
+    let chunks = Layout::default()
+      .direction(Direction::Vertical)
+      .margin(2)
+      .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
+      .split(area);
 
-		let info_box = InfoBox::new(
-			"Deleted Partition",
-			styled_block(vec![
-				vec![(None,"This partition has been marked for deletion.")],
-				vec![(None,"Reclaiming the freed space can cause unpredictable behavior, so if you wish to reclaim the space freed by marking this partition for deletion, please return to the previous menu and reset the partition layout.")],
-			])
-		);
-		info_box.render(f, chunks[0]);
-		self.buttons.render(f, chunks[1]);
-	}
+    let info_box = InfoBox::new(
+      "Deleted Partition",
+      styled_block(vec![
+        vec![(None, "This partition has been marked for deletion.")],
+        vec![(
+          None,
+          "Reclaiming the freed space can cause unpredictable behavior, so if you wish to reclaim the space freed by marking this partition for deletion, please return to the previous menu and reset the partition layout.",
+        )],
+      ]),
+    );
+    info_box.render(f, chunks[0]);
+    self.buttons.render(f, chunks[1]);
+  }
 }
 
 impl Page for AlterPartition {
@@ -1714,187 +1948,219 @@ impl Page for AlterPartition {
 }
 
 pub struct SetMountPoint {
-	editor: LineEditor,
-	dev_id: u64
+  editor: LineEditor,
+  dev_id: u64,
 }
 
 impl SetMountPoint {
-	pub fn new(dev_id: u64) -> Self {
-		let mut editor = LineEditor::new("Mount Point", Some("Enter a mount point..."));
-		editor.focus();
-		Self { editor, dev_id }
-	}
-	fn validate_mount_point(mount_point: &str, taken: &[String]) -> Result<(), String> {
-		if mount_point.is_empty() {
-			return Err("Mount point cannot be empty.".to_string());
-		}
-		if !mount_point.starts_with('/') {
-			return Err("Mount point must be an absolute path starting with '/'.".to_string());
-		}
-		if mount_point != "/" && mount_point.ends_with('/') {
-			return Err("Mount point cannot end with '/' unless it is root '/'.".to_string());
-		}
-		if taken.contains(&mount_point.to_string()) {
-			return Err(format!("Mount point '{mount_point}' is already taken by another partition."));
-		}
-		Ok(())
-	}
+  pub fn new(dev_id: u64) -> Self {
+    let mut editor = LineEditor::new("Mount Point", Some("Enter a mount point..."));
+    editor.focus();
+    Self { editor, dev_id }
+  }
+  fn validate_mount_point(mount_point: &str, taken: &[String]) -> Result<(), String> {
+    if mount_point.is_empty() {
+      return Err("Mount point cannot be empty.".to_string());
+    }
+    if !mount_point.starts_with('/') {
+      return Err("Mount point must be an absolute path starting with '/'.".to_string());
+    }
+    if mount_point != "/" && mount_point.ends_with('/') {
+      return Err("Mount point cannot end with '/' unless it is root '/'.".to_string());
+    }
+    if taken.contains(&mount_point.to_string()) {
+      return Err(format!(
+        "Mount point '{mount_point}' is already taken by another partition."
+      ));
+    }
+    Ok(())
+  }
 }
 
 impl Page for SetMountPoint {
-	fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-		let chunks = Layout::default()
-			.direction(Direction::Vertical)
-			.constraints(
-				[
-					Constraint::Percentage(40),
-					Constraint::Length(5),
-					Constraint::Percentage(40),
-				]
-				.as_ref(),
-			)
-			.split(area);
-		let hor_chunks = Layout::default()
-			.direction(Direction::Horizontal)
-			.constraints(
-				[
-					Constraint::Percentage(15),
-					Constraint::Percentage(70),
-					Constraint::Percentage(15),
-				]
-				.as_ref(),
-			)
-			.split(chunks[1]);
+  fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
+    let chunks = Layout::default()
+      .direction(Direction::Vertical)
+      .constraints(
+        [
+          Constraint::Percentage(40),
+          Constraint::Length(5),
+          Constraint::Percentage(40),
+        ]
+        .as_ref(),
+      )
+      .split(area);
+    let hor_chunks = Layout::default()
+      .direction(Direction::Horizontal)
+      .constraints(
+        [
+          Constraint::Percentage(15),
+          Constraint::Percentage(70),
+          Constraint::Percentage(15),
+        ]
+        .as_ref(),
+      )
+      .split(chunks[1]);
 
-		let info_box = InfoBox::new(
-			"Set Mount Point",
-			styled_block(vec![
-				vec![(None, "Specify the mount point for the selected partition.")],
-				vec![(None, "Examples of valid mount points include:")],
-				vec![(None, "- "), (HIGHLIGHT, "/")],
-				vec![(None, "- "), (HIGHLIGHT, "/home")],
-				vec![(None, "- "), (HIGHLIGHT, "/boot")],
-				vec![(None, "Mount points must be absolute paths.")],
-			])
-		);
-		info_box.render(f, chunks[0]);
-		self.editor.render(f, hor_chunks[1]);
-	}
-	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
-		match event.code {
-			KeyCode::Esc => Signal::Pop,
-			KeyCode::Enter => {
-				let mount_point = self.editor.get_value().unwrap().as_str().unwrap().trim().to_string();
-				let Some(device) = installer.drive_config.as_mut() else {
-					return Signal::Error(anyhow::anyhow!("No drive config available for setting mount point"));
-				};
-				let current_mount = device
-						.partitions()
-						.find(|p| p.id() == self.dev_id)
-						.and_then(|p| p.mount_point());
+    let info_box = InfoBox::new(
+      "Set Mount Point",
+      styled_block(vec![
+        vec![(None, "Specify the mount point for the selected partition.")],
+        vec![(None, "Examples of valid mount points include:")],
+        vec![(None, "- "), (HIGHLIGHT, "/")],
+        vec![(None, "- "), (HIGHLIGHT, "/home")],
+        vec![(None, "- "), (HIGHLIGHT, "/boot")],
+        vec![(None, "Mount points must be absolute paths.")],
+      ]),
+    );
+    info_box.render(f, chunks[0]);
+    self.editor.render(f, hor_chunks[1]);
+  }
+  fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
+    match event.code {
+      KeyCode::Esc => Signal::Pop,
+      KeyCode::Enter => {
+        let mount_point = self
+          .editor
+          .get_value()
+          .unwrap()
+          .as_str()
+          .unwrap()
+          .trim()
+          .to_string();
+        let Some(device) = installer.drive_config.as_mut() else {
+          return Signal::Error(anyhow::anyhow!(
+            "No drive config available for setting mount point"
+          ));
+        };
+        let current_mount = device
+          .partitions()
+          .find(|p| p.id() == self.dev_id)
+          .and_then(|p| p.mount_point());
 
-				let mut taken_mounts: Vec<String> = device
-					.partitions()
-					.filter_map(|d| d.mount_point().map(|mp| mp.to_string()))
-					.collect();
+        let mut taken_mounts: Vec<String> = device
+          .partitions()
+          .filter_map(|d| d.mount_point().map(|mp| mp.to_string()))
+          .collect();
 
-				if let Some(current_mount) = current_mount {
-					taken_mounts.retain(|mp| mp != current_mount);
-				}
-				if let Err(err) = Self::validate_mount_point(&mount_point, &taken_mounts) {
-					self.editor.error(&err);
-					return Signal::Wait;
-				}
+        if let Some(current_mount) = current_mount {
+          taken_mounts.retain(|mp| mp != current_mount);
+        }
+        if let Err(err) = Self::validate_mount_point(&mount_point, &taken_mounts) {
+          self.editor.error(&err);
+          return Signal::Wait;
+        }
 
-				if let Some(part) = device.partition_by_id_mut(self.dev_id) {
-					part.set_mount_point(&mount_point);
-				}
-				Signal::PopCount(2)
-			}
-			_ => self.editor.handle_input(event)
-		}
-	}
+        if let Some(part) = device.partition_by_id_mut(self.dev_id) {
+          part.set_mount_point(&mount_point);
+        }
+        Signal::PopCount(2)
+      }
+      _ => self.editor.handle_input(event),
+    }
+  }
 }
 
 pub struct SetLabel {
-	editor: LineEditor,
-	dev_id: u64
+  editor: LineEditor,
+  dev_id: u64,
 }
 
 impl SetLabel {
-	pub fn new(dev_id: u64) -> Self {
-		let mut editor = LineEditor::new("Partition Label", Some("Enter a label..."));
-		editor.focus();
-		Self { editor, dev_id }
-	}
+  pub fn new(dev_id: u64) -> Self {
+    let mut editor = LineEditor::new("Partition Label", Some("Enter a label..."));
+    editor.focus();
+    Self { editor, dev_id }
+  }
 }
 
 impl Page for SetLabel {
-	fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-		let chunks = Layout::default()
-			.direction(Direction::Vertical)
-			.constraints(
-				[
-					Constraint::Percentage(40),
-					Constraint::Length(5),
-					Constraint::Percentage(40),
-				]
-				.as_ref(),
-			)
-			.split(area);
-		let hor_chunks = Layout::default()
-			.direction(Direction::Horizontal)
-			.constraints(
-				[
-					Constraint::Percentage(15),
-					Constraint::Percentage(70),
-					Constraint::Percentage(15),
-				]
-				.as_ref()
-			)
-			.split(chunks[1]);
+  fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
+    let chunks = Layout::default()
+      .direction(Direction::Vertical)
+      .constraints(
+        [
+          Constraint::Percentage(40),
+          Constraint::Length(5),
+          Constraint::Percentage(40),
+        ]
+        .as_ref(),
+      )
+      .split(area);
+    let hor_chunks = Layout::default()
+      .direction(Direction::Horizontal)
+      .constraints(
+        [
+          Constraint::Percentage(15),
+          Constraint::Percentage(70),
+          Constraint::Percentage(15),
+        ]
+        .as_ref(),
+      )
+      .split(chunks[1]);
 
-		let info_box = InfoBox::new(
-			"Set Partition Label",
-			styled_block(vec![
-				vec![(None, "Specify a label for the selected partition.")],
-				vec![(None, "Partition labels can help identify partitions in the system.")],
-				vec![(None, "")],
-				vec![(HIGHLIGHT, "NOTE: If possible, you should make sure that your labels are all uppercase letters.")],
-				vec![(None, "Labels with lowercase letters may break certain tools, and they also cannot be used with vfat filesystems.")],
-			])
-		);
-		info_box.render(f, chunks[0]);
-		self.editor.render(f, hor_chunks[1]);
-	}
-	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
-		match event.code {
-			KeyCode::Esc => Signal::Pop,
-			KeyCode::Enter => {
-				let label = self.editor.get_value().unwrap().as_str().unwrap().trim().to_string();
-				if label.is_empty() {
-					self.editor.error("Label cannot be empty.");
-					return Signal::Wait;
-				}
-				if label.len() > 36 {
-					self.editor.error("Label cannot exceed 36 characters.");
-					return Signal::Wait;
-				}
-				if label.contains(' ') {
-					self.editor.error("Label cannot contain spaces.");
-					return Signal::Wait;
-				}
-				let Some(drive_config) = installer.drive_config.as_mut() else {
-					return Signal::Error(anyhow::anyhow!("No drive config available for setting partition label"));
-				};
-				let Some(part) = drive_config.partition_by_id_mut(self.dev_id) else {
-					return Signal::Error(anyhow::anyhow!("No partition found with id {}", self.dev_id));
-				};
+    let info_box = InfoBox::new(
+      "Set Partition Label",
+      styled_block(vec![
+        vec![(None, "Specify a label for the selected partition.")],
+        vec![(
+          None,
+          "Partition labels can help identify partitions in the system.",
+        )],
+        vec![(None, "")],
+        vec![(
+          HIGHLIGHT,
+          "NOTE: If possible, you should make sure that your labels are all uppercase letters.",
+        )],
+        vec![(
+          None,
+          "Labels with lowercase letters may break certain tools, and they also cannot be used with vfat filesystems.",
+        )],
+      ]),
+    );
+    info_box.render(f, chunks[0]);
+    self.editor.render(f, hor_chunks[1]);
+  }
+  fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
+    match event.code {
+      KeyCode::Esc => Signal::Pop,
+      KeyCode::Enter => {
+        let label = self
+          .editor
+          .get_value()
+          .unwrap()
+          .as_str()
+          .unwrap()
+          .trim()
+          .to_string();
+        if label.is_empty() {
+          self.editor.error("Label cannot be empty.");
+          return Signal::Wait;
+        }
+        if label.len() > 36 {
+          self.editor.error("Label cannot exceed 36 characters.");
+          return Signal::Wait;
+        }
+        if label.contains(' ') {
+          self.editor.error("Label cannot contain spaces.");
+          return Signal::Wait;
+        }
+        let Some(drive_config) = installer.drive_config.as_mut() else {
+          return Signal::Error(anyhow::anyhow!(
+            "No drive config available for setting partition label"
+          ));
+        };
+        let Some(part) = drive_config.partition_by_id_mut(self.dev_id) else {
+          return Signal::Error(anyhow::anyhow!(
+            "No partition found with id {}",
+            self.dev_id
+          ));
+        };
 
-				part.set_label(&label);
-				Signal::PopCount(2)
-			}
-			_ => self.editor.handle_input(event)
-		}
-	}
+        part.set_label(&label);
+        Signal::PopCount(2)
+      }
+      _ => self.editor.handle_input(event),
+    }
+  }
 }
