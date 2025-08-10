@@ -59,10 +59,10 @@ nix build
 
 ### Running nixos-wizard
 
-Run directly as root inside a NixOS live environment or your dev shell:
+If running inside the included installer ISO:
 
 ```bash
-sudo ./target/release/nixos-wizard
+sudo nixos-wizard
 ```
 
 Alternatively, run the latest release from GitHub via Nix:
