@@ -284,10 +284,35 @@ impl NixWriter {
 		}
 	}
 	fn parse_kb_layout(value: &str) -> String {
-		let value = if value == "us(qwerty)" { "us" } else { value };
+		let (xkb, console) = match value {
+			"us(qwerty)" => ("us", "us"),
+			"us(dvorak)" => ("us", "dvorak"),
+			"us(colemak)" => ("us", "colemak"),
+			"uk"         => ("gb", "uk"),
+			"de"         => ("de", "de"),
+			"fr"         => ("fr", "fr"),
+			"es"         => ("es", "es"),
+			"it"         => ("it", "it"),
+			"ru"         => ("ru", "ru"),
+			"cn"         => ("cn", "us"),
+			"jp"         => ("jp", "us"),
+			"kr"         => ("kr", "us"),
+			"in"         => ("in", "us"),
+			"br"         => ("br", "br-abnt2"),
+			"nl"         => ("nl", "nl"),
+			"se"         => ("se", "us"),
+			"no"         => ("no", "no"),
+			"fi"         => ("fi", "fi"),
+			"dk"         => ("dk", "dk"),
+			"pl"         => ("pl", "pl"),
+			"tr"         => ("tr", "trq"),
+			"gr"         => ("gr", "gr"),
+			_            => ("us", "us"),
+		};
+
 		attrset! {
-			"services.xserver.xkb.layout" = nixstr(value);
-			"console.keyMap" = nixstr(value);
+			"services.xserver.xkb.layout" = nixstr(xkb);
+			"console.keyMap" = nixstr(console);
 		}
 	}
 

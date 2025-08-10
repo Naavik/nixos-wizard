@@ -61,15 +61,17 @@ macro_rules! merge_attrs {
 	($($set:expr),* $(,)?) => {{
 		let mut merged = String::new();
 		$(
-			if !$set.starts_with('{') || !$set.ends_with('}') {
-				panic!("attrset must be a valid attribute set");
+			if !$set.is_empty() {
+				if !$set.starts_with('{') || !$set.ends_with('}') {
+					panic!("attrset must be a valid attribute set, got: {:?}", $set);
+				}
+				let inner = $set
+				.strip_prefix('{')
+				.and_then(|s| s.strip_suffix('}'))
+				.unwrap_or("")
+				.trim();
+				merged.push_str(inner);
 			}
-			let inner = $set
-			.strip_prefix('{')
-			.and_then(|s| s.strip_suffix('}'))
-			.unwrap_or("")
-			.trim();
-			merged.push_str(inner);
 		)*
 			format!("{{ {merged} }}")
 	}};
