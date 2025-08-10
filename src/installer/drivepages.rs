@@ -6,16 +6,7 @@ use ratatui::{
 };
 use serde_json::Value;
 
-use crate::{
-  drives::{
-    DiskItem, PartStatus, Partition, bytes_readable, disk_table, lsblk, parse_sectors, part_table,
-  },
-  installer::{Installer, Page, Signal},
-  styled_block,
-  widget::{
-    Button, CheckBox, ConfigWidget, HelpModal, InfoBox, LineEditor, TableWidget, WidgetBox,
-  },
-};
+use crate::{drives::{bytes_readable, disk_table, lsblk, parse_sectors, part_table, DiskItem, PartStatus, Partition}, installer::{Installer, Page, Signal}, styled_block, ui_back, ui_close, ui_down, ui_enter, ui_up, widget::{Button, CheckBox, ConfigWidget, HelpModal, InfoBox, LineEditor, TableWidget, WidgetBox}};
 
 const HIGHLIGHT: Option<(Color, Modifier)> = Some((Color::Yellow, Modifier::BOLD));
 
@@ -132,102 +123,89 @@ impl<'a> Default for Drives<'a> {
 }
 
 impl<'a> Page for Drives<'a> {
-  fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(2)
-      .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
-      .split(area);
+	fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
+		let chunks = Layout::default()
+			.direction(Direction::Vertical)
+			.margin(2)
+			.constraints(
+				[
+				Constraint::Percentage(70),
+				Constraint::Percentage(30),
+				]
+				.as_ref(),
+			)
+			.split(area);
 
-    self.info_box.render(f, chunks[0]);
-    self.buttons.render(f, chunks[1]);
+		self.info_box.render(f, chunks[0]);
+		self.buttons.render(f, chunks[1]);
 
-    // Render help modal on top
-    self.help_modal.render(f, area);
-  }
-  fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
-    match event.code {
-      KeyCode::Char('?') => {
-        self.help_modal.toggle();
-        Signal::Wait
-      }
-      KeyCode::Esc if self.help_modal.visible => {
-        self.help_modal.hide();
-        Signal::Wait
-      }
-      _ if self.help_modal.visible => Signal::Wait,
-      KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
-      KeyCode::Up | KeyCode::Char('k') => {
-        self.buttons.prev_child();
-        Signal::Wait
-      }
-      KeyCode::Down | KeyCode::Char('j') => {
-        self.buttons.next_child();
-        Signal::Wait
-      }
-      KeyCode::Enter => {
-        let Some(idx) = self.buttons.selected_child() else {
-          return Signal::Wait;
-        };
-        let disks = match lsblk() {
-          Ok(disks) => disks,
-          Err(e) => return Signal::Error(anyhow::anyhow!("Failed to list block devices: {e}")),
-        };
-        let table = disk_table(&disks);
-        installer.drives = disks;
-        match idx {
-          0 => {
-            installer.use_auto_drive_config = true;
-            Signal::Push(Box::new(SelectDrive::new(table)))
-          }
-          1 => {
-            installer.use_auto_drive_config = false;
-            Signal::Push(Box::new(SelectDrive::new(table)))
-          }
-          2 => Signal::Pop,
-          _ => Signal::Wait,
-        }
-      }
-      _ => Signal::Wait,
-    }
-  }
+		// Render help modal on top
+		self.help_modal.render(f, area);
+	}
+	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
+		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			ui_close!() if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
+			ui_back!() => Signal::Pop,
+			ui_up!() => {
+				self.buttons.prev_child();
+				Signal::Wait
+			}
+			ui_down!() => {
+				self.buttons.next_child();
+				Signal::Wait
+			}
+			ui_enter!() => {
+				let Some(idx) = self.buttons.selected_child() else {
+					return Signal::Wait;
+				};
+				let disks = match lsblk() {
+					Ok(disks) => disks,
+					Err(e) => return Signal::Error(anyhow::anyhow!("Failed to list block devices: {e}"))
+				};
+				let table = disk_table(&disks);
+				installer.drives = disks;
+				match idx {
+					0 => {
+						installer.use_auto_drive_config = true;
+						Signal::Push(Box::new(SelectDrive::new(table)))
+					}
+					1 => {
+						installer.use_auto_drive_config = false;
+						Signal::Push(Box::new(SelectDrive::new(table)))
+					}
+					2 => Signal::Pop,
+					_ => Signal::Wait,
+				}
+			}
+			_ => Signal::Wait,
+		}
+	}
 
-  fn get_help_content(&self) -> (String, Vec<ratatui::text::Line<'_>>) {
-    let help_content = styled_block(vec![
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"),
-        (None, " - Navigate options"),
-      ],
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "Enter"),
-        (None, " - Select drive configuration method"),
-      ],
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "Esc"),
-        (None, " - Return to main menu"),
-      ],
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "?"),
-        (None, " - Show this help"),
-      ],
-      vec![(None, "")],
-      vec![(
-        None,
-        "Choose how to configure your drive for NixOS installation:",
-      )],
-      vec![(
-        None,
-        "• Best-effort default - Automatic partitioning (recommended)",
-      )],
-      vec![(None, "• Manual configuration - Advanced users only")],
-      vec![(None, "")],
-      vec![
-        (Some((Color::Red, Modifier::BOLD)), "WARNING: "),
-        (None, "All data on the selected drive will be erased!"),
-      ],
-    ]);
-    ("Drive Configuration".to_string(), help_content)
-  }
+	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line<'_>>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select drive configuration method")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Return to main menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Choose how to configure your drive for NixOS installation:")],
+			vec![(None, "• Best-effort default - Automatic partitioning (recommended)")],
+			vec![(None, "• Manual configuration - Advanced users only")],
+			vec![(None, "")],
+			vec![(Some((Color::Red, Modifier::BOLD)), "WARNING: "), (None, "All data on the selected drive will be erased!")],
+		]);
+		("Drive Configuration".to_string(), help_content)
+	}
 }
 
 pub struct SelectDrive {
@@ -276,89 +254,70 @@ impl SelectDrive {
 
 impl Page for SelectDrive {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    self.table.render(f, area);
+		self.table.render(f, area);
 
-    // Render help modal on top
-    self.help_modal.render(f, area);
-  }
-  fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
-    match event.code {
-      KeyCode::Char('?') => {
-        self.help_modal.toggle();
-        Signal::Wait
-      }
-      KeyCode::Esc if self.help_modal.visible => {
-        self.help_modal.hide();
-        Signal::Wait
-      }
-      _ if self.help_modal.visible => Signal::Wait,
-      KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
-      KeyCode::Up | KeyCode::Char('k') => {
-        self.table.previous_row();
-        Signal::Wait
-      }
-      KeyCode::Down | KeyCode::Char('j') => {
-        self.table.next_row();
-        Signal::Wait
-      }
-      KeyCode::Enter => {
-        if let Some(row) = self.table.selected_row() {
-          let Some(disk) = installer.drives.get(row) else {
-            return Signal::Error(anyhow::anyhow!("Failed to find drive info'"));
-          };
+		// Render help modal on top
+		self.help_modal.render(f, area);
+	}
+	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
+		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			ui_close!() if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
+			ui_back!() => Signal::Pop,
+			ui_up!() => {
+				self.table.previous_row();
+				Signal::Wait
+			}
+			ui_down!() => {
+				self.table.next_row();
+				Signal::Wait
+			}
+			ui_enter!() => {
+				if let Some(row) = self.table.selected_row() {
+					let Some(disk) = installer.drives.get(row) else {
+						return Signal::Error(anyhow::anyhow!("Failed to find drive info'"));
+					};
 
-          installer.drive_config = Some(disk.clone());
-          if installer.use_auto_drive_config {
-            Signal::Push(Box::new(SelectFilesystem::new(None)))
-          } else {
-            let Some(ref drive) = installer.drive_config else {
-              return Signal::Error(anyhow::anyhow!("No drive config available"));
-            };
-            let table = part_table(drive.layout(), drive.sector_size());
-            Signal::Push(Box::new(ManualPartition::new(table)))
-          }
-        } else {
-          Signal::Wait
-        }
-      }
-      _ => Signal::Wait,
-    }
-  }
+					installer.drive_config = Some(disk.clone());
+					if installer.use_auto_drive_config {
+						Signal::Push(Box::new(SelectFilesystem::new(None)))
+					} else {
+						let Some(ref drive) = installer.drive_config else {
+							return Signal::Error(anyhow::anyhow!("No drive config available"));
+						};
+						let table = part_table(drive.layout(), drive.sector_size());
+						Signal::Push(Box::new(ManualPartition::new(table)))
+					}
+				} else {
+					Signal::Wait
+				}
+			}
+			_ => Signal::Wait,
+		}
+	}
 
-  fn get_help_content(&self) -> (String, Vec<ratatui::text::Line<'_>>) {
-    let help_content = styled_block(vec![
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"),
-        (None, " - Navigate drive list"),
-      ],
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "Enter"),
-        (None, " - Select drive for installation"),
-      ],
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "Esc"),
-        (None, " - Return to previous menu"),
-      ],
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "?"),
-        (None, " - Show this help"),
-      ],
-      vec![(None, "")],
-      vec![(
-        None,
-        "Select the drive you want to use for your NixOS installation.",
-      )],
-      vec![(
-        None,
-        "The selected drive will be used for partitioning and formatting.",
-      )],
-      vec![
-        (Some((Color::Red, Modifier::BOLD)), "WARNING: "),
-        (None, "All data on the selected drive will be erased!"),
-      ],
-    ]);
-    ("Select Drive".to_string(), help_content)
-  }
+	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line<'_>>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate drive list")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select drive for installation")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Return to previous menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Select the drive you want to use for your NixOS installation.")],
+			vec![(None, "The selected drive will be used for partitioning and formatting.")],
+			vec![(Some((Color::Red, Modifier::BOLD)), "WARNING: "), (None, "All data on the selected drive will be erased!")],
+		]);
+		("Select Drive".to_string(), help_content)
+	}
 }
 
 pub struct SelectFilesystem {
@@ -694,128 +653,119 @@ impl SelectFilesystem {
 }
 
 impl Page for SelectFilesystem {
-  fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let vert_chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-      .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .margin(2)
-      .constraints(
-        [
-          Constraint::Percentage(40),
-          Constraint::Percentage(20),
-          Constraint::Percentage(40),
-        ]
-        .as_ref(),
-      )
-      .split(vert_chunks[0]);
+	fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
+		let vert_chunks = Layout::default()
+			.direction(Direction::Vertical)
+			.constraints(
+				[
+					Constraint::Percentage(50),
+					Constraint::Percentage(50),
+				]
+				.as_ref(),
+			)
+			.split(area);
+		let hor_chunks = Layout::default()
+			.direction(Direction::Horizontal)
+			.margin(2)
+			.constraints(
+				[
+					Constraint::Percentage(40),
+					Constraint::Percentage(20),
+					Constraint::Percentage(40),
+				]
+				.as_ref(),
+			)
+			.split(vert_chunks[0]);
 
-    let idx = self.buttons.selected_child().unwrap_or(9);
-    let info_box = Self::get_fs_info(self.buttons.selected_child().unwrap_or(9));
-    self.buttons.render(f, hor_chunks[1]);
-    if idx < 9 {
-      info_box.render(f, vert_chunks[1]);
-    }
 
-    // Render help modal on top
-    self.help_modal.render(f, area);
-  }
-  fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
-    match event.code {
-      KeyCode::Char('?') => {
-        self.help_modal.toggle();
-        Signal::Wait
-      }
-      KeyCode::Esc if self.help_modal.visible => {
-        self.help_modal.hide();
-        Signal::Wait
-      }
-      _ if self.help_modal.visible => Signal::Wait,
-      KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
-      KeyCode::Up | KeyCode::Char('k') => {
-        self.buttons.prev_child();
-        Signal::Wait
-      }
-      KeyCode::Down | KeyCode::Char('j') => {
-        self.buttons.next_child();
-        Signal::Wait
-      }
-      KeyCode::Enter => {
-        let Some(idx) = self.buttons.selected_child() else {
-          return Signal::Wait;
-        };
-        let fs = match idx {
-          0 => "ext4",
-          1 => "ext3",
-          2 => "ext2",
-          3 => "btrfs",
-          4 => "xfs",
-          5 => "fat12",
-          6 => "fat16",
-          7 => "fat32",
-          8 => "ntfs",
-          9 => return Signal::Pop,
-          _ => return Signal::Wait,
-        }
-        .to_string();
+		let idx = self.buttons.selected_child().unwrap_or(9);
+		let info_box = Self::get_fs_info(self.buttons.selected_child().unwrap_or(9));
+		self.buttons.render(f, hor_chunks[1]);
+		if idx < 9 {
+			info_box.render(f, vert_chunks[1]);
+		}
 
-        if installer.use_auto_drive_config {
-          if let Some(config) = installer.drive_config.as_mut() {
-            config.use_default_layout(Some(fs));
-          }
-          installer.make_drive_config_display();
-          return Signal::PopCount(3);
-        } else {
-          let Some(config) = installer.drive_config.as_mut() else {
-            return Signal::Error(anyhow::anyhow!("No drive config available"));
-          };
-          let Some(id) = self.dev_id else {
-            return Signal::Error(anyhow::anyhow!(
-              "No device id specified for filesystem selection"
-            ));
-          };
-          let Some(partition) = config.partition_by_id_mut(id) else {
-            return Signal::Error(anyhow::anyhow!("No partition found with id {:?}", id));
-          };
-          partition.set_fs_type(&fs);
-        }
+		// Render help modal on top
+		self.help_modal.render(f, area);
+	}
+	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
+		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			ui_close!() if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
+			ui_back!() => Signal::Pop,
+			ui_up!() => {
+				self.buttons.prev_child();
+				Signal::Wait
+			}
+			ui_down!() => {
+				self.buttons.next_child();
+				Signal::Wait
+			}
+			ui_enter!() => {
+				let Some(idx) = self.buttons.selected_child() else {
+					return Signal::Wait;
+				};
+				let fs =  match idx {
+					0 => "ext4",
+					1 => "ext3",
+					2 => "ext2",
+					3 => "btrfs",
+					4 => "xfs",
+					5 => "fat12",
+					6 => "fat16",
+					7 => "fat32",
+					8 => "ntfs",
+					9 => return Signal::Pop,
+					_ => return Signal::Wait,
+				}.to_string();
 
-        Signal::PopCount(2)
-      }
-      _ => Signal::Wait,
-    }
-  }
+				if installer.use_auto_drive_config {
+					if let Some(config) = installer.drive_config.as_mut() {
+						config.use_default_layout(Some(fs));
+					}
+					installer.make_drive_config_display();
+					return Signal::PopCount(3);
+				} else {
+					let Some(config) = installer.drive_config.as_mut() else {
+						return Signal::Error(anyhow::anyhow!("No drive config available"));
+					};
+					let Some(id) = self.dev_id else {
+						return Signal::Error(anyhow::anyhow!("No device id specified for filesystem selection"));
+					};
+					let Some(partition) = config.partition_by_id_mut(id) else {
+						return Signal::Error(anyhow::anyhow!("No partition found with id {:?}", id));
+					};
+					partition.set_fs_type(&fs);
+				}
 
-  fn get_help_content(&self) -> (String, Vec<ratatui::text::Line<'_>>) {
-    let help_content = styled_block(vec![
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"),
-        (None, " - Navigate filesystem options"),
-      ],
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "Enter"),
-        (None, " - Select filesystem type"),
-      ],
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "Esc"),
-        (None, " - Return to previous menu"),
-      ],
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "?"),
-        (None, " - Show this help"),
-      ],
-      vec![(None, "")],
-      vec![(None, "Choose the filesystem type for your partition.")],
-      vec![(
-        None,
-        "Different filesystems have different features and performance",
-      )],
-      vec![(None, "characteristics. ext4 is recommended for most users.")],
-    ]);
-    ("Select Filesystem".to_string(), help_content)
-  }
+				Signal::PopCount(2)
+			}
+			_ => Signal::Wait,
+		}
+	}
+
+	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line<'_>>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate filesystem options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select filesystem type")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Return to previous menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Choose the filesystem type for your partition.")],
+			vec![(None, "Different filesystems have different features and performance")],
+			vec![(None, "characteristics. ext4 is recommended for most users.")],
+		]);
+		("Select Filesystem".to_string(), help_content)
+	}
 }
 
 pub struct ManualPartition {
@@ -878,241 +828,211 @@ impl ManualPartition {
 }
 
 impl Page for ManualPartition {
-  fn render(&mut self, installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let Some(ref config) = installer.drive_config else {
-      log::error!("No drive config available for manual partitioning");
-      return;
-    };
-    let rows = part_table(config.layout(), config.sector_size())
-      .rows()
-      .to_vec();
-    self.disk_config.set_rows(rows);
-    let len = self.disk_config.len();
-    let table_constraint = 20 + (5u16 * len as u16);
-    let padding = 70u16.saturating_sub(table_constraint);
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(2)
-      .constraints(
-        [
-          Constraint::Percentage(table_constraint),
-          Constraint::Percentage(30),
-          Constraint::Percentage(padding),
-        ]
-        .as_ref(),
-      )
-      .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .margin(2)
-      .constraints(
-        [
-          Constraint::Percentage(33),
-          Constraint::Percentage(33),
-          Constraint::Percentage(33),
-        ]
-        .as_ref(),
-      )
-      .split(chunks[1]);
+	fn render(&mut self, installer: &mut Installer, f: &mut Frame, area: Rect) {
+		let Some(ref config) = installer.drive_config else {
+			log::error!("No drive config available for manual partitioning");
+			return;
+		};
+		let rows = part_table(config.layout(), config.sector_size()).rows().to_vec();
+		self.disk_config.set_rows(rows);
+		let len = self.disk_config.len();
+		let table_constraint = 20 + (5u16 * len as u16);
+		let padding = 70u16.saturating_sub(table_constraint);
+		let chunks = Layout::default()
+			.direction(Direction::Vertical)
+			.margin(2)
+			.constraints(
+				[
+					Constraint::Percentage(table_constraint),
+					Constraint::Percentage(30),
+					Constraint::Percentage(padding),
+				]
+				.as_ref(),
+			)
+			.split(area);
+		let hor_chunks = Layout::default()
+			.direction(Direction::Horizontal)
+			.margin(2)
+			.constraints(
+				[
+					Constraint::Percentage(33),
+					Constraint::Percentage(33),
+					Constraint::Percentage(33),
+				]
+				.as_ref(),
+			)
+			.split(chunks[1]);
 
-    self.disk_config.render(f, chunks[0]);
-    self.buttons.render(f, hor_chunks[1]);
+		self.disk_config.render(f, chunks[0]);
+		self.buttons.render(f, hor_chunks[1]);
 
-    // Render help modal on top
-    self.help_modal.render(f, area);
-  }
-  fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
-    match event.code {
-      KeyCode::Char('?') => {
-        self.help_modal.toggle();
-        return Signal::Wait;
-      }
-      KeyCode::Esc if self.help_modal.visible => {
-        self.help_modal.hide();
-        return Signal::Wait;
-      }
-      _ if self.help_modal.visible => {
-        return Signal::Wait;
-      }
-      _ => {}
-    }
+		// Render help modal on top
+		self.help_modal.render(f, area);
+	}
+	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
+		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				return Signal::Wait;
+			}
+			ui_close!() if self.help_modal.visible => {
+				self.help_modal.hide();
+				return Signal::Wait;
+			}
+			_ if self.help_modal.visible => {
+				return Signal::Wait;
+			}
+			_ => {}
+		}
 
-    if self.confirming_reset && event.code != KeyCode::Enter {
-      self.confirming_reset = false;
-      self.buttons.set_children_inplace(vec![
-        Box::new(Button::new("Suggest Partition Layout")) as Box<dyn ConfigWidget>,
-        Box::new(Button::new("Confirm and Exit")) as Box<dyn ConfigWidget>,
-        Box::new(Button::new("Reset Partition Layout")) as Box<dyn ConfigWidget>,
-        Box::new(Button::new("Abort")) as Box<dyn ConfigWidget>,
-      ]);
-    }
-    if self.disk_config.is_focused() {
-      match event.code {
-        KeyCode::Char('q') | KeyCode::Esc => Signal::PopCount(2),
-        KeyCode::Up | KeyCode::Char('k') => {
-          if !self.disk_config.previous_row() {
-            self.disk_config.unfocus();
-            self.buttons.last_child();
-            self.buttons.focus();
-          }
-          Signal::Wait
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-          if !self.disk_config.next_row() {
-            self.disk_config.unfocus();
-            self.buttons.first_child();
-            self.buttons.focus();
-          }
-          Signal::Wait
-        }
-        KeyCode::Enter => {
-          log::debug!("Disk config is focused, handling row selection");
-          // we have now selected a row in the table
-          // now we need to figure out if we are editing a partition or creating one
-          let Some(row) = self.disk_config.get_selected_row_info() else {
-            return Signal::Error(anyhow::anyhow!("No row selected in disk config table"));
-          };
-          let Some(start) = row.get_field("start").and_then(|s| s.parse::<u64>().ok()) else {
-            return Signal::Error(anyhow::anyhow!(
-              "Failed to parse start sector from row: {:?}",
-              row
-            ));
-          };
-          let Some(ref drive) = installer.drive_config else {
-            return Signal::Error(anyhow::anyhow!("No drive config available"));
-          };
-          let layout = drive.layout();
-          let Some(item) = layout.iter().rfind(|i| i.start() == start) else {
-            return Signal::Error(anyhow::anyhow!(
-              "No partition or free space found at start sector {}",
-              start
-            ));
-          };
-          log::debug!("Selected item: {item:?}");
-          match item {
-            DiskItem::Partition(part) => Signal::Push(Box::new(AlterPartition::new(part.clone()))),
-            DiskItem::FreeSpace { id, start, size } => Signal::Push(Box::new(NewPartition::new(
-              *id,
-              *start,
-              drive.sector_size(),
-              *size,
-            ))),
-          }
-        }
-        _ => Signal::Wait,
-      }
-    } else if self.buttons.is_focused() {
-      match event.code {
-        KeyCode::Char('q') | KeyCode::Esc => Signal::PopCount(2),
-        KeyCode::Up | KeyCode::Char('k') => {
-          if !self.buttons.prev_child() {
-            self.buttons.unfocus();
-            self.disk_config.last_row();
-            self.disk_config.focus();
-          }
-          Signal::Wait
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-          if !self.buttons.next_child() {
-            self.buttons.unfocus();
-            self.disk_config.first_row();
-            self.disk_config.focus();
-          }
-          Signal::Wait
-        }
-        KeyCode::Enter => {
-          let Some(idx) = self.buttons.selected_child() else {
-            return Signal::Wait;
-          };
-          match idx {
-            0 => {
-              // Suggest Partition Layout
-              Signal::Push(Box::new(SuggestPartition::new()))
-            }
-            1 => {
-              // Confirm and Exit
-              installer.make_drive_config_display();
-              return Signal::Unwind;
-            }
-            2 => {
-              if !self.confirming_reset {
-                self.confirming_reset = true;
-                let new_buttons = vec![
-                  Box::new(Button::new("Suggest Partition Layout")) as Box<dyn ConfigWidget>,
-                  Box::new(Button::new("Confirm and Exit")) as Box<dyn ConfigWidget>,
-                  Box::new(Button::new("Really?")) as Box<dyn ConfigWidget>,
-                  Box::new(Button::new("Abort")) as Box<dyn ConfigWidget>,
-                ];
-                self.buttons.set_children_inplace(new_buttons);
-                Signal::Wait
-              } else {
-                let Some(ref mut device) = installer.drive_config else {
-                  return Signal::Wait;
-                };
-                device.reset_layout();
-                self.buttons.unfocus();
-                self.disk_config.first_row();
-                self.disk_config.focus();
-                self.confirming_reset = false;
-                self.buttons.set_children_inplace(vec![
-                  Box::new(Button::new("Suggest Partition Layout")) as Box<dyn ConfigWidget>,
-                  Box::new(Button::new("Confirm and Exit")) as Box<dyn ConfigWidget>,
-                  Box::new(Button::new("Reset Partition Layout")) as Box<dyn ConfigWidget>,
-                  Box::new(Button::new("Abort")) as Box<dyn ConfigWidget>,
-                ]);
-                Signal::Wait
-              }
-            }
-            3 => {
-              // Abort
-              return Signal::PopCount(2);
-            }
-            _ => Signal::Wait,
-          }
-        }
-        _ => Signal::Wait,
-      }
-    } else {
-      self.disk_config.focus();
-      self.handle_input(installer, event)
-    }
-  }
+		if self.confirming_reset && event.code != KeyCode::Enter {
+			self.confirming_reset = false;
+			self.buttons.set_children_inplace(vec![
+				Box::new(Button::new("Suggest Partition Layout")) as Box<dyn ConfigWidget>,
+				Box::new(Button::new("Confirm and Exit")) as Box<dyn ConfigWidget>,
+				Box::new(Button::new("Reset Partition Layout")) as Box<dyn ConfigWidget>,
+				Box::new(Button::new("Abort")) as Box<dyn ConfigWidget>,
+			]);
+		}
+		if self.disk_config.is_focused() {
+			match event.code {
+				ui_back!() => Signal::PopCount(2),
+				ui_up!() => {
+					if !self.disk_config.previous_row() {
+						self.disk_config.unfocus();
+						self.buttons.last_child();
+						self.buttons.focus();
+					}
+					Signal::Wait
+				}
+				ui_down!() => {
+					if !self.disk_config.next_row() {
+						self.disk_config.unfocus();
+						self.buttons.first_child();
+						self.buttons.focus();
+					}
+					Signal::Wait
+				}
+				KeyCode::Enter => {
+					log::debug!("Disk config is focused, handling row selection");
+					// we have now selected a row in the table
+					// now we need to figure out if we are editing a partition or creating one
+					let Some(row) = self.disk_config.get_selected_row_info() else {
+						return Signal::Error(anyhow::anyhow!("No row selected in disk config table"));
+					};
+					let Some(start) = row.get_field("start").and_then(|s| s.parse::<u64>().ok()) else {
+						return Signal::Error(anyhow::anyhow!("Failed to parse start sector from row: {:?}", row));
+					};
+					let Some(ref drive) = installer.drive_config else {
+						return Signal::Error(anyhow::anyhow!("No drive config available"));
+					};
+					let layout = drive.layout();
+					let Some(item) = layout.iter().rfind(|i| i.start() == start) else {
+						return Signal::Error(anyhow::anyhow!("No partition or free space found at start sector {}", start));
+					};
+					log::debug!("Selected item: {item:?}");
+					match item {
+						DiskItem::Partition(part) => {
+							Signal::Push(Box::new(AlterPartition::new(part.clone())))
+						}
+						DiskItem::FreeSpace { id, start, size } => {
+							Signal::Push(Box::new(NewPartition::new(*id, *start, drive.sector_size(), *size)))
+						}
+					}
+				}
+				_ => Signal::Wait,
+			}
+		} else if self.buttons.is_focused() {
+			match event.code {
+				ui_back!() => Signal::PopCount(2),
+				ui_up!() => {
+					if !self.buttons.prev_child() {
+						self.buttons.unfocus();
+						self.disk_config.last_row();
+						self.disk_config.focus();
+					}
+					Signal::Wait
+				}
+				ui_down!() => {
+					if !self.buttons.next_child() {
+						self.buttons.unfocus();
+						self.disk_config.first_row();
+						self.disk_config.focus();
+					}
+					Signal::Wait
+				}
+				KeyCode::Enter => {
+					let Some(idx) = self.buttons.selected_child() else {
+						return Signal::Wait;
+					};
+					match idx {
+						0 => {
+							// Suggest Partition Layout
+							Signal::Push(Box::new(SuggestPartition::new()))
+						}
+						1 => {
+							// Confirm and Exit
+							installer.make_drive_config_display();
+							return Signal::Unwind;
+						}
+						2 => {
+							if !self.confirming_reset {
+								self.confirming_reset = true;
+								let new_buttons = vec![
+									Box::new(Button::new("Suggest Partition Layout")) as Box<dyn ConfigWidget>,
+									Box::new(Button::new("Confirm and Exit")) as Box<dyn ConfigWidget>,
+									Box::new(Button::new("Really?")) as Box<dyn ConfigWidget>,
+									Box::new(Button::new("Abort")) as Box<dyn ConfigWidget>,
+								];
+								self.buttons.set_children_inplace(new_buttons);
+								Signal::Wait
+							} else {
+								let Some(ref mut device) = installer.drive_config else {
+									return Signal::Wait;
+								};
+								device.reset_layout();
+								self.buttons.unfocus();
+								self.disk_config.first_row();
+								self.disk_config.focus();
+								self.confirming_reset = false;
+								self.buttons.set_children_inplace(vec![
+									Box::new(Button::new("Suggest Partition Layout")) as Box<dyn ConfigWidget>,
+									Box::new(Button::new("Confirm and Exit")) as Box<dyn ConfigWidget>,
+									Box::new(Button::new("Reset Partition Layout")) as Box<dyn ConfigWidget>,
+									Box::new(Button::new("Abort")) as Box<dyn ConfigWidget>,
+								]);
+								Signal::Wait
+							}
+						}
+						3 => {
+							// Abort
+							return Signal::PopCount(2);
+						}
+						_ => Signal::Wait,
+					}
+				}
+				_ => Signal::Wait,
+			}
+		} else {
+			self.disk_config.focus();
+			self.handle_input(installer, event)
+		}
+	}
 
-  fn get_help_content(&self) -> (String, Vec<ratatui::text::Line<'_>>) {
-    let help_content = styled_block(vec![
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"),
-        (None, " - Navigate partitions and buttons"),
-      ],
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "Tab"),
-        (None, " - Switch between partition table and buttons"),
-      ],
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "Enter"),
-        (None, " - Select partition or button action"),
-      ],
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "Esc"),
-        (None, " - Return to previous menu"),
-      ],
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "?"),
-        (None, " - Show this help"),
-      ],
-      vec![(None, "")],
-      vec![(
-        None,
-        "Manually configure drive partitions. Select partitions to",
-      )],
-      vec![(
-        None,
-        "modify them or select free space to create new partitions.",
-      )],
-      vec![(None, "Use buttons at bottom for additional actions.")],
-    ]);
-    ("Manual Partitioning".to_string(), help_content)
-  }
+	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line<'_>>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate partitions and buttons")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Tab"), (None, " - Switch between partition table and buttons")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Select partition or button action")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Return to previous menu")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Manually configure drive partitions. Select partitions to")],
+			vec![(None, "modify them or select free space to create new partitions.")],
+			vec![(None, "Use buttons at bottom for additional actions.")],
+		]);
+		("Manual Partitioning".to_string(), help_content)
+	}
 }
 
 pub struct SuggestPartition {
@@ -1171,125 +1091,107 @@ impl Default for SuggestPartition {
 }
 
 impl Page for SuggestPartition {
-  fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(2)
-      .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
-      .split(area);
+	fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
+		let chunks = Layout::default()
+			.direction(Direction::Vertical)
+			.margin(2)
+			.constraints(
+				[
+					Constraint::Percentage(70),
+					Constraint::Percentage(30),
+				]
+				.as_ref(),
+			)
+			.split(area);
 
-    let info_box = InfoBox::new(
-      "Suggest Partition Layout",
-      styled_block(vec![
-        vec![
-          (None, "Would you like to use a "),
-          (HIGHLIGHT, "suggested partition layout "),
-          (None, "for your selected drive?"),
-        ],
-        vec![
-          (None, "This will create a standard layout with a "),
-          (HIGHLIGHT, "boot partition "),
-          (None, "and a "),
-          (HIGHLIGHT, "root partition."),
-        ],
-        vec![
-          (
-            None,
-            "Any existing manual configuration will be overwritten, and when the installer is run, ",
-          ),
-          (
-            Some((Color::Red, Modifier::ITALIC | Modifier::BOLD)),
-            "all existing data on the drive will be erased.",
-          ),
-        ],
-        vec![(None, "")],
-        vec![(None, "Do you wish to proceed?")],
-      ]),
-    );
-    info_box.render(f, chunks[0]);
-    self.buttons.render(f, chunks[1]);
+		let info_box = InfoBox::new(
+			"Suggest Partition Layout",
+			styled_block(vec![
+				vec![
+					(None, "Would you like to use a "),
+					(HIGHLIGHT, "suggested partition layout "),
+					(None, "for your selected drive?")
+				],
+				vec![
+					(None, "This will create a standard layout with a "),
+					(HIGHLIGHT, "boot partition "),
+					(None, "and a "),
+					(HIGHLIGHT, "root partition."),
+				],
+				vec![
+					(None, "Any existing manual configuration will be overwritten, and when the installer is run, "),
+					(Some((Color::Red, Modifier::ITALIC | Modifier::BOLD)), "all existing data on the drive will be erased."),
+				],
+				vec![(None, "")],
+				vec![(None, "Do you wish to proceed?")],
+			])
+		);
+		info_box.render(f, chunks[0]);
+		self.buttons.render(f, chunks[1]);
 
-    // Render help modal on top
-    self.help_modal.render(f, area);
-  }
-  fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
-    match event.code {
-      KeyCode::Char('?') => {
-        self.help_modal.toggle();
-        Signal::Wait
-      }
-      KeyCode::Esc if self.help_modal.visible => {
-        self.help_modal.hide();
-        Signal::Wait
-      }
-      _ if self.help_modal.visible => Signal::Wait,
-      KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
-      KeyCode::Up | KeyCode::Char('k') => {
-        self.buttons.prev_child();
-        Signal::Wait
-      }
-      KeyCode::Down | KeyCode::Char('j') => {
-        self.buttons.next_child();
-        Signal::Wait
-      }
-      KeyCode::Enter => {
-        let Some(idx) = self.buttons.selected_child() else {
-          return Signal::Wait;
-        };
-        match idx {
-          0 => {
-            // Yes
-            if let Some(ref mut config) = installer.drive_config {
-              config.use_default_layout(Some("ext4".into()));
-            } else {
-              return Signal::Error(anyhow::anyhow!(
-                "No drive config available for suggested partition layout"
-              ));
-            }
-            Signal::Pop
-          }
-          1 => {
-            // No
-            Signal::Pop
-          }
-          _ => Signal::Wait,
-        }
-      }
-      _ => Signal::Wait,
-    }
-  }
+		// Render help modal on top
+		self.help_modal.render(f, area);
+	}
+	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
+		match event.code {
+			KeyCode::Char('?') => {
+				self.help_modal.toggle();
+				Signal::Wait
+			}
+			ui_close!() if self.help_modal.visible => {
+				self.help_modal.hide();
+				Signal::Wait
+			}
+			_ if self.help_modal.visible => {
+				Signal::Wait
+			}
+			ui_back!() => Signal::Pop,
+			ui_up!() => {
+				self.buttons.prev_child();
+				Signal::Wait
+			}
+			ui_down!() => {
+				self.buttons.next_child();
+				Signal::Wait
+			}
+			KeyCode::Enter => {
+				let Some(idx) = self.buttons.selected_child() else {
+					return Signal::Wait;
+				};
+				match idx {
+					0 => {
+						// Yes
+						if let Some(ref mut config) = installer.drive_config {
+							config.use_default_layout(Some("ext4".into()));
+						} else {
+							return Signal::Error(anyhow::anyhow!("No drive config available for suggested partition layout"));
+						}
+						Signal::Pop
+					}
+					1 => {
+						// No
+						Signal::Pop
+					}
+					_ => Signal::Wait,
+				}
+			}
+			_ => Signal::Wait,
+		}
+	}
 
-  fn get_help_content(&self) -> (String, Vec<ratatui::text::Line<'_>>) {
-    let help_content = styled_block(vec![
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"),
-        (None, " - Navigate yes/no options"),
-      ],
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "Enter"),
-        (None, " - Confirm selection"),
-      ],
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "Esc"),
-        (None, " - Cancel and return"),
-      ],
-      vec![
-        (Some((Color::Yellow, Modifier::BOLD)), "?"),
-        (None, " - Show this help"),
-      ],
-      vec![(None, "")],
-      vec![(None, "Confirm whether to use a suggested partition layout.")],
-      vec![(
-        None,
-        "This will create a standard boot and root partition setup.",
-      )],
-      vec![
-        (Some((Color::Red, Modifier::BOLD)), "WARNING: "),
-        (None, "All existing data will be erased!"),
-      ],
-    ]);
-    ("Suggest Partition Layout".to_string(), help_content)
-  }
+	fn get_help_content(&self) -> (String, Vec<ratatui::text::Line<'_>>) {
+		let help_content = styled_block(vec![
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "↑/↓, j/k"), (None, " - Navigate yes/no options")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Enter"), (None, " - Confirm selection")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "Esc"), (None, " - Cancel and return")],
+			vec![(Some((Color::Yellow, Modifier::BOLD)), "?"), (None, " - Show this help")],
+			vec![(None, "")],
+			vec![(None, "Confirm whether to use a suggested partition layout.")],
+			vec![(None, "This will create a standard boot and root partition setup.")],
+			vec![(Some((Color::Red, Modifier::BOLD)), "WARNING: "), (None, "All existing data will be erased!")],
+		]);
+		("Suggest Partition Layout".to_string(), help_content)
+	}
 }
 
 pub struct NewPartition {
@@ -1310,338 +1212,282 @@ pub struct NewPartition {
 }
 
 impl NewPartition {
-  pub fn new(fs_id: u64, part_start: u64, sector_size: u64, total_size: u64) -> Self {
-    let bytes = total_size * sector_size;
-    let sectors = bytes.div_ceil(sector_size); // round up
-    let part_end = part_start + sectors - 1;
-    let fs_buttons = {
-      let buttons = vec![
-        Box::new(Button::new("ext4")) as Box<dyn ConfigWidget>,
-        Box::new(Button::new("ext3")) as Box<dyn ConfigWidget>,
-        Box::new(Button::new("ext2")) as Box<dyn ConfigWidget>,
-        Box::new(Button::new("btrfs")) as Box<dyn ConfigWidget>,
-        Box::new(Button::new("xfs")) as Box<dyn ConfigWidget>,
-        Box::new(Button::new("fat12")) as Box<dyn ConfigWidget>,
-        Box::new(Button::new("fat16")) as Box<dyn ConfigWidget>,
-        Box::new(Button::new("fat32")) as Box<dyn ConfigWidget>,
-        Box::new(Button::new("ntfs")) as Box<dyn ConfigWidget>,
-      ];
-      let mut button_row = WidgetBox::button_menu(buttons);
-      button_row.focus();
-      button_row
-    };
-    let mount_input = LineEditor::new("New Partition Mount Point", None::<&str>);
-    let mut size_input = LineEditor::new(
-      "New Partition Size",
-      Some("Empty input uses rest of free space"),
-    );
-    size_input.focus();
-    Self {
-      fs_id,
-      part_start,
-      sector_size,
-      total_size,
-      part_end,
+	pub fn new(fs_id: u64, part_start: u64, sector_size: u64, total_size: u64) -> Self {
+		let bytes = total_size * sector_size;
+		let sectors = bytes.div_ceil(sector_size); // round up
+		let part_end = part_start + sectors - 1;
+		let fs_buttons = {
+			let buttons = vec![
+				Box::new(Button::new("ext4")) as Box<dyn ConfigWidget>,
+				Box::new(Button::new("ext3")) as Box<dyn ConfigWidget>,
+				Box::new(Button::new("ext2")) as Box<dyn ConfigWidget>,
+				Box::new(Button::new("btrfs")) as Box<dyn ConfigWidget>,
+				Box::new(Button::new("xfs")) as Box<dyn ConfigWidget>,
+				Box::new(Button::new("fat12")) as Box<dyn ConfigWidget>,
+				Box::new(Button::new("fat16")) as Box<dyn ConfigWidget>,
+				Box::new(Button::new("fat32")) as Box<dyn ConfigWidget>,
+				Box::new(Button::new("ntfs")) as Box<dyn ConfigWidget>,
+			];
+			let mut button_row = WidgetBox::button_menu(buttons);
+			button_row.focus();
+			button_row
+		};
+		let mount_input = LineEditor::new("New Partition Mount Point", None::<&str>);
+		let mut size_input = LineEditor::new("New Partition Size", Some("Empty input uses rest of free space"));
+		size_input.focus();
+		Self {
+			fs_id,
+			part_start,
+			sector_size,
+			total_size,
+			part_end,
 
-      new_part_size: None,
-      size_input,
+			new_part_size: None,
+			size_input,
 
-      new_part_fs: None,
-      fs_buttons,
+			new_part_fs: None,
+			fs_buttons,
 
-      new_part_mount_point: None,
-      mount_input,
-    }
-  }
-  pub fn total_size_bytes(&self) -> u64 {
-    self.total_size * self.sector_size
-  }
-  pub fn render_size_input(&mut self, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .constraints(
-        [
-          Constraint::Percentage(40),
-          Constraint::Length(5),
-          Constraint::Percentage(40),
-        ]
-        .as_ref(),
-      )
-      .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .constraints(
-        [
-          Constraint::Percentage(33),
-          Constraint::Percentage(34),
-          Constraint::Percentage(33),
-        ]
-        .as_ref(),
-      )
-      .split(chunks[1]);
+			new_part_mount_point: None,
+			mount_input
+		}
+	}
+	pub fn total_size_bytes(&self) -> u64 {
+		self.total_size * self.sector_size
+	}
+	pub fn render_size_input(&mut self, f: &mut Frame, area: Rect) {
+		let chunks = Layout::default()
+			.direction(Direction::Vertical)
+			.constraints(
+				[
+					Constraint::Percentage(40),
+					Constraint::Length(5),
+					Constraint::Percentage(40),
+				]
+				.as_ref(),
+			)
+			.split(area);
+		let hor_chunks = Layout::default()
+			.direction(Direction::Horizontal)
+			.constraints(
+				[
+					Constraint::Percentage(33),
+					Constraint::Percentage(34),
+					Constraint::Percentage(33),
+				]
+				.as_ref(),
+			)
+			.split(chunks[1]);
 
-    let info_box = InfoBox::new(
-      "Free Space Info",
-      styled_block(vec![
-        vec![
-          (HIGHLIGHT, "Sector Size: "),
-          (None, &format!("{}", self.sector_size)),
-        ],
-        vec![
-          (HIGHLIGHT, "Partition Start Sector: "),
-          (None, &format!("{}", self.part_start)),
-        ],
-        vec![
-          (HIGHLIGHT, "Partition End Sector: "),
-          (None, &format!("{}", self.part_end)),
-        ],
-        vec![
-          (HIGHLIGHT, "Total Free Space: "),
-          (None, &bytes_readable(self.total_size_bytes())),
-        ],
-        vec![(None, "")],
-        vec![(
-          None,
-          "Enter the desired size for the new partition. You can specify sizes in bytes (B), kilobytes (KB), megabytes (MB), gigabytes (GB), terabytes (TB), or as a percentage of the total free space (e.g., 50%). A number given without a unit is counted in sectors.",
-        )],
-        vec![
-          (None, "Examples: "),
-          (Some((Color::Green, Modifier::BOLD)), "10GB"),
-          (None, ", "),
-          (Some((Color::Green, Modifier::BOLD)), "500MiB"),
-          (None, ", "),
-          (Some((Color::Green, Modifier::BOLD)), "100%"),
-        ],
-      ]),
-    );
-    info_box.render(f, chunks[0]);
-    self.size_input.render(f, hor_chunks[1]);
-  }
-  pub fn handle_input_size(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
-    match event.code {
-      KeyCode::Esc => Signal::Pop,
-      KeyCode::Enter => {
-        let input = self.size_input.get_value().unwrap();
-        let mut input = input.as_str().unwrap().trim(); // TODO: handle these unwraps
-        if input.is_empty() {
-          input = "100%";
-        }
-        let Some(ref device) = installer.drive_config else {
-          return Signal::Error(anyhow::anyhow!(
-            "No drive config available for new partition size input"
-          ));
-        };
-        match parse_sectors(input, device.sector_size(), self.total_size) {
-          Some(size) => {
-            self.new_part_size = Some(size);
-            self.size_input.unfocus();
-            self.fs_buttons.focus();
-            Signal::Wait
-          }
-          None => {
-            self.size_input.error("Invalid size input");
-            Signal::Wait
-          }
-        }
-      }
-      _ => self.size_input.handle_input(event),
-    }
-  }
-  pub fn render_fs_select(&mut self, f: &mut Frame, area: Rect) {
-    let vert_chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-      .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .margin(2)
-      .constraints(
-        [
-          Constraint::Percentage(40),
-          Constraint::Percentage(20),
-          Constraint::Percentage(40),
-        ]
-        .as_ref(),
-      )
-      .split(vert_chunks[0]);
+		let info_box = InfoBox::new("Free Space Info", styled_block(vec![
+				vec![(HIGHLIGHT, "Sector Size: "), (None, &format!("{}", self.sector_size))],
+				vec![(HIGHLIGHT, "Partition Start Sector: "), (None, &format!("{}", self.part_start))],
+				vec![(HIGHLIGHT, "Partition End Sector: "), (None, &format!("{}", self.part_end))],
+				vec![(HIGHLIGHT, "Total Free Space: "), (None, &bytes_readable(self.total_size_bytes()))],
+				vec![(None, "")],
+				vec![(None, "Enter the desired size for the new partition. You can specify sizes in bytes (B), kilobytes (KB), megabytes (MB), gigabytes (GB), terabytes (TB), or as a percentage of the total free space (e.g., 50%). A number given without a unit is counted in sectors.")],
+				vec![(None, "Examples: "), (Some((Color::Green, Modifier::BOLD)), "10GB"), (None, ", "), (Some((Color::Green, Modifier::BOLD)), "500MiB"), (None, ", "), (Some((Color::Green, Modifier::BOLD)), "100%")],
+		]));
+		info_box.render(f, chunks[0]);
+		self.size_input.render(f, hor_chunks[1]);
+	}
+	pub fn handle_input_size(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
+		match event.code {
+			KeyCode::Esc => Signal::Pop,
+			KeyCode::Enter => {
+				let input = self.size_input.get_value().unwrap();
+				let mut input = input.as_str().unwrap().trim(); // TODO: handle these unwraps
+				if input.is_empty() {
+					input = "100%";
+				}
+				let Some(ref device) = installer.drive_config else {
+					return Signal::Error(anyhow::anyhow!("No drive config available for new partition size input"));
+				};
+				match parse_sectors(input, device.sector_size(), self.total_size) {
+					Some(size) => {
+						self.new_part_size = Some(size);
+						self.size_input.unfocus();
+						self.fs_buttons.focus();
+						Signal::Wait
+					}
+					None => {
+						self.size_input.error("Invalid size input");
+						Signal::Wait
+					}
+				}
+			}
+			_ => self.size_input.handle_input(event),
+		}
+	}
+	pub fn render_fs_select(&mut self, f: &mut Frame, area: Rect) {
+		let vert_chunks = Layout::default()
+			.direction(Direction::Vertical)
+			.constraints(
+				[
+					Constraint::Percentage(50),
+					Constraint::Percentage(50),
+				]
+				.as_ref(),
+			)
+			.split(area);
+		let hor_chunks = Layout::default()
+			.direction(Direction::Horizontal)
+			.margin(2)
+			.constraints(
+				[
+					Constraint::Percentage(40),
+					Constraint::Percentage(20),
+					Constraint::Percentage(40),
+				]
+				.as_ref(),
+			)
+			.split(vert_chunks[0]);
 
-    let idx = self.fs_buttons.selected_child().unwrap_or(9);
-    let info_box = SelectFilesystem::get_fs_info(self.fs_buttons.selected_child().unwrap_or(9));
-    self.fs_buttons.render(f, hor_chunks[1]);
-    if idx < 9 {
-      info_box.render(f, vert_chunks[1]);
-    }
-  }
-  pub fn handle_input_fs_select(&mut self, _installer: &mut Installer, event: KeyEvent) -> Signal {
-    match event.code {
-      KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
-      KeyCode::Up | KeyCode::Char('k') => {
-        self.fs_buttons.prev_child();
-        Signal::Wait
-      }
-      KeyCode::Down | KeyCode::Char('j') => {
-        self.fs_buttons.next_child();
-        Signal::Wait
-      }
-      KeyCode::Enter => {
-        let Some(idx) = self.fs_buttons.selected_child() else {
-          return Signal::Wait;
-        };
-        let fs = match idx {
-          0 => "ext4",
-          1 => "ext3",
-          2 => "ext2",
-          3 => "btrfs",
-          4 => "xfs",
-          5 => "fat12",
-          6 => "fat16",
-          7 => "fat32",
-          8 => "ntfs",
-          9 => {
-            self.new_part_size = None;
-            self.size_input.focus();
-            self.fs_buttons.unfocus();
-            return Signal::Wait;
-          }
-          _ => return Signal::Wait,
-        }
-        .to_string();
+		let idx = self.fs_buttons.selected_child().unwrap_or(9);
+		let info_box = SelectFilesystem::get_fs_info(self.fs_buttons.selected_child().unwrap_or(9));
+		self.fs_buttons.render(f, hor_chunks[1]);
+		if idx < 9 {
+			info_box.render(f, vert_chunks[1]);
+		}
+	}
+	pub fn handle_input_fs_select(&mut self, _installer: &mut Installer, event: KeyEvent) -> Signal {
+		match event.code {
+			ui_back!() => Signal::Pop,
+			ui_up!() => {
+				self.fs_buttons.prev_child();
+				Signal::Wait
+			}
+			ui_down!() => {
+				self.fs_buttons.next_child();
+				Signal::Wait
+			}
+			KeyCode::Enter => {
+				let Some(idx) = self.fs_buttons.selected_child() else {
+					return Signal::Wait;
+				};
+				let fs =  match idx {
+					0 => "ext4",
+					1 => "ext3",
+					2 => "ext2",
+					3 => "btrfs",
+					4 => "xfs",
+					5 => "fat12",
+					6 => "fat16",
+					7 => "fat32",
+					8 => "ntfs",
+					9 => {
+						self.new_part_size = None;
+						self.size_input.focus();
+						self.fs_buttons.unfocus();
+						return Signal::Wait;
+					}
+					_ => return Signal::Wait,
+				}.to_string();
 
-        self.new_part_fs = Some(fs);
-        self.fs_buttons.unfocus();
-        self.mount_input.focus();
-        Signal::Wait
-      }
-      _ => Signal::Wait,
-    }
-  }
-  pub fn render_mount_point_input(&mut self, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .constraints(
-        [
-          Constraint::Percentage(70),
-          Constraint::Length(5),
-          Constraint::Percentage(25),
-        ]
-        .as_ref(),
-      )
-      .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .constraints(
-        [
-          Constraint::Percentage(33),
-          Constraint::Percentage(34),
-          Constraint::Percentage(33),
-        ]
-        .as_ref(),
-      )
-      .split(chunks[1]);
+				self.new_part_fs = Some(fs);
+				self.fs_buttons.unfocus();
+				self.mount_input.focus();
+				Signal::Wait
+			}
+			_ => Signal::Wait,
+		}
+	}
+	pub fn render_mount_point_input(&mut self, f: &mut Frame, area: Rect) {
+		let chunks = Layout::default()
+			.direction(Direction::Vertical)
+			.constraints(
+				[
+					Constraint::Percentage(70),
+					Constraint::Length(5),
+					Constraint::Percentage(25),
+				]
+				.as_ref(),
+			)
+			.split(area);
+		let hor_chunks = Layout::default()
+			.direction(Direction::Horizontal)
+			.constraints(
+				[
+					Constraint::Percentage(33),
+					Constraint::Percentage(34),
+					Constraint::Percentage(33),
+				]
+				.as_ref(),
+			)
+			.split(chunks[1]);
 
-    let info_box = InfoBox::new(
-      "Mount Point Info",
-      styled_block(vec![
-        vec![(
-          None,
-          "Enter the mount point for the new partition. This is the directory where the partition will be mounted in the filesystem.",
-        )],
-        vec![
-          (None, "Common mount points include "),
-          (Some((Color::Green, Modifier::BOLD)), "/"),
-          (None, " for root, "),
-          (Some((Color::Green, Modifier::BOLD)), "/home"),
-          (None, " for user data, "),
-          (Some((Color::Green, Modifier::BOLD)), "/boot"),
-          (None, " for boot files, and "),
-          (Some((Color::Green, Modifier::BOLD)), "/var"),
-          (None, " for variable data."),
-        ],
-        vec![(None, "You can also specify other mount points as needed.")],
-        vec![(None, "")],
-        vec![
-          (None, "Examples: "),
-          (Some((Color::Green, Modifier::BOLD)), "/"),
-          (None, ", "),
-          (Some((Color::Green, Modifier::BOLD)), "/home"),
-          (None, ", "),
-          (Some((Color::Green, Modifier::BOLD)), "/mnt/data"),
-        ],
-      ]),
-    );
-    info_box.render(f, chunks[0]);
-    self.mount_input.render(f, hor_chunks[1]);
-  }
-  pub fn handle_input_mount_point(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
-    match event.code {
-      KeyCode::Esc => {
-        self.new_part_fs = None;
-        self.fs_buttons.focus();
-        self.mount_input.unfocus();
-        Signal::Wait
-      }
-      KeyCode::Enter => {
-        let input = self.mount_input.get_value().unwrap();
-        let input = input.as_str().unwrap().trim(); // TODO: handle these unwraps
-        let Some(ref mut device) = installer.drive_config else {
-          return Signal::Error(anyhow::anyhow!(
-            "No drive config available for new partition mount point input"
-          ));
-        };
-        let taken_mounts: Vec<String> = device
-          .layout()
-          .iter()
-          .filter(|di| {
-            let DiskItem::Partition(p) = di else {
-              return true;
-            };
-            let PartStatus::Delete = *p.status() else {
-              return true;
-            };
-            false // The partition is deleted, so we filter it out
-          })
-          .filter_map(|d| d.mount_point().map(|s| s.to_string()))
-          .collect();
+		let info_box = InfoBox::new("Mount Point Info", styled_block(vec![
+				vec![(None, "Enter the mount point for the new partition. This is the directory where the partition will be mounted in the filesystem.")],
+				vec![(None, "Common mount points include "), (Some((Color::Green, Modifier::BOLD)), "/"), (None, " for root, "), (Some((Color::Green, Modifier::BOLD)), "/home"), (None, " for user data, "), (Some((Color::Green, Modifier::BOLD)), "/boot"), (None, " for boot files, and "), (Some((Color::Green, Modifier::BOLD)), "/var"), (None, " for variable data.")],
+				vec![(None, "You can also specify other mount points as needed.")],
+				vec![(None, "")],
+				vec![(None, "Examples: "), (Some((Color::Green, Modifier::BOLD)), "/"), (None, ", "), (Some((Color::Green, Modifier::BOLD)), "/home"), (None, ", "), (Some((Color::Green, Modifier::BOLD)), "/mnt/data")],
+		]));
+		info_box.render(f, chunks[0]);
+		self.mount_input.render(f, hor_chunks[1]);
+	}
+	pub fn handle_input_mount_point(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
+		match event.code {
+			KeyCode::Esc => {
+				self.new_part_fs = None;
+				self.fs_buttons.focus();
+				self.mount_input.unfocus();
+				Signal::Wait
+			}
+			KeyCode::Enter => {
+				let input = self.mount_input.get_value().unwrap();
+				let input = input.as_str().unwrap().trim(); // TODO: handle these unwraps
+				let Some(ref mut device) = installer.drive_config else {
+					return Signal::Error(anyhow::anyhow!("No drive config available for new partition mount point input"));
+				};
+				let taken_mounts: Vec<String> = device
+					.layout()
+					.iter()
+					.filter(|di| {
+						let DiskItem::Partition(p) = di else { return true };
+						let PartStatus::Delete = *p.status() else { return true };
+						false // The partition is deleted, so we filter it out
+					})
+					.filter_map(|d| d.mount_point().map(|s| s.to_string()))
+					.collect();
 
-        if let Err(err) = SetMountPoint::validate_mount_point(input, &taken_mounts) {
-          self.mount_input.error(&err);
-          return Signal::Wait;
-        }
-        self.new_part_mount_point = Some(input.to_string());
-        self.mount_input.unfocus();
+				if let Err(err) = SetMountPoint::validate_mount_point(input, &taken_mounts) {
+					self.mount_input.error(&err);
+					return Signal::Wait;
+				}
+				self.new_part_mount_point = Some(input.to_string());
+				self.mount_input.unfocus();
 
-        let flags = if self.new_part_mount_point.as_deref() == Some("/boot") {
-          vec!["boot".to_string(), "esp".to_string()]
-        } else {
-          vec![]
-        };
-        let Some(size) = self.new_part_size else {
-          return Signal::Error(anyhow::anyhow!(
-            "No new partition size specified when finalizing new partition"
-          ));
-        };
+				let flags = if self.new_part_mount_point.as_deref() == Some("/boot") {
+					vec!["boot".to_string(), "esp".to_string()]
+				} else {
+					vec![]
+				};
+				let Some(size) = self.new_part_size else {
+					return Signal::Error(anyhow::anyhow!("No new partition size specified when finalizing new partition"));
+				};
 
-        let new_part = Partition::new(
-          self.part_start,
-          size,
-          self.sector_size,
-          PartStatus::Create,
-          None,
-          self.new_part_fs.clone(),
-          self.new_part_mount_point.clone(),
-          None,
-          false,
-          flags,
-        );
-        if let Err(e) = device.new_partition(new_part) {
-          return Signal::Error(anyhow::anyhow!("Failed to create new partition: {}", e));
-        };
+				let new_part = Partition::new(
+					self.part_start,
+					size,
+					self.sector_size,
+					PartStatus::Create,
+					None,
+					self.new_part_fs.clone(),
+					self.new_part_mount_point.clone(),
+					None,
+					false,
+					flags
+				);
+				if let Err(e) = device.new_partition(new_part) {
+					return Signal::Error(anyhow::anyhow!("Failed to create new partition: {}", e));
+				};
 
-        Signal::Pop
-      }
-      _ => self.mount_input.handle_input(event),
-    }
-  }
+				Signal::Pop
+			}
+			_ => self.mount_input.handle_input(event),
+		}
+	}
 }
 
 impl Page for NewPartition {
@@ -1848,263 +1694,257 @@ impl AlterPartition {
 }
 
 impl Page for AlterPartition {
-  fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    match &self.part_status {
-      PartStatus::Exists => {
-        self.render_existing_part(f, area);
-      }
-      PartStatus::Modify | PartStatus::Create => {
-        self.render_modify_part(f, area);
-      }
-      PartStatus::Delete => {
-        self.render_delete_part(f, area);
-      }
-      _ => {
-        let info_box = InfoBox::new(
-          "Alter Partition",
-          styled_block(vec![vec![(
-            None,
-            "The partition status is unknown. No actions can be performed on this partition.",
-          )]]),
-        );
-        info_box.render(f, area);
-      }
-    }
-  }
-  fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
-    match event.code {
-      KeyCode::Char('q') | KeyCode::Esc => Signal::Pop,
-      KeyCode::Up | KeyCode::Char('k') => {
-        self.buttons.prev_child();
-        Signal::Wait
-      }
-      KeyCode::Down | KeyCode::Char('j') => {
-        self.buttons.next_child();
-        Signal::Wait
-      }
-      KeyCode::Enter => {
-        if self.part_status == PartStatus::Delete {
-          return Signal::Pop;
-        }
-        let Some(idx) = self.buttons.selected_child() else {
-          return Signal::Wait;
-        };
-        let Some(ref mut device) = installer.drive_config else {
-          return Signal::Error(anyhow::anyhow!(
-            "No drive config available for altering partition"
-          ));
-        };
-        match self.part_status {
-          PartStatus::Exists => {
-            let Some(part) = device.partition_by_id_mut(self.part_id) else {
-              return Signal::Error(anyhow::anyhow!(
-                "No partition found with id {}",
-                self.part_id
-              ));
-            };
-            match idx {
-              0 => {
-                // Set Mount Point
-                Signal::Push(Box::new(SetMountPoint::new(self.part_id)))
-              }
-              1 => {
-                // Mark For Modification
-                part.set_status(PartStatus::Modify);
-                Signal::Pop
-              }
-              2 => {
-                // Delete Partition
-                part.set_status(PartStatus::Delete);
-                device.calculate_free_space();
-                Signal::Pop
-              }
-              3 => {
-                // Back
-                Signal::Pop
-              }
-              _ => Signal::Wait,
-            }
-          }
-          PartStatus::Modify => {
-            match idx {
-              0 => {
-                // Set Mount Point
-                Signal::Push(Box::new(SetMountPoint::new(self.part_id)))
-              }
-              1 => {
-                if let Some(child) = self.buttons.focused_child_mut() {
-                  child.interact();
-                  if let Some(value) = child.get_value() {
-                    let Value::Bool(checked) = value else {
-                      return Signal::Wait;
-                    };
-                    if let Some(part) = device.partition_by_id_mut(self.part_id) {
-                      if checked {
-                        part.add_flag("boot");
-                      } else {
-                        part.remove_flag("boot");
-                      }
-                    }
-                  }
-                }
-                Signal::Wait
-              }
-              2 => {
-                if let Some(child) = self.buttons.focused_child_mut() {
-                  child.interact();
-                  if let Some(value) = child.get_value() {
-                    let Value::Bool(checked) = value else {
-                      return Signal::Wait;
-                    };
-                    if let Some(part) = device.partition_by_id_mut(self.part_id) {
-                      if checked {
-                        part.add_flag("esp");
-                      } else {
-                        part.remove_flag("esp");
-                      }
-                    }
-                  }
-                }
-                Signal::Wait
-              }
-              3 => {
-                if let Some(child) = self.buttons.focused_child_mut() {
-                  child.interact();
-                  if let Some(value) = child.get_value() {
-                    let Value::Bool(checked) = value else {
-                      return Signal::Wait;
-                    };
-                    if let Some(part) = device.partition_by_id_mut(self.part_id) {
-                      if checked {
-                        part.add_flag("bls_boot");
-                      } else {
-                        part.remove_flag("bls_boot");
-                      }
-                    }
-                  }
-                }
-                Signal::Wait
-              }
-              4 => {
-                // Change Filesystem
-                Signal::Push(Box::new(SelectFilesystem::new(Some(self.part_id))))
-              }
-              5 => {
-                // Set Label
-                Signal::Push(Box::new(SetLabel::new(self.part_id)))
-              }
-              6 => {
-                // Unmark for modification
-                if let Some(part) = device.partition_by_id_mut(self.part_id) {
-                  part.set_status(PartStatus::Exists);
-                }
-                Signal::Pop
-              }
-              7 => {
-                // Delete Partition
-                if let Some(part) = device.partition_by_id_mut(self.part_id) {
-                  part.set_status(PartStatus::Delete);
-                }
-                Signal::Pop
-              }
-              8 => {
-                // Back
-                Signal::Pop
-              }
-              _ => Signal::Wait,
-            }
-          }
-          PartStatus::Create => {
-            match idx {
-              0 => {
-                // Set Mount Point
-                Signal::Push(Box::new(SetMountPoint::new(self.part_id)))
-              }
-              1 => {
-                if let Some(child) = self.buttons.focused_child_mut() {
-                  child.interact();
-                  if let Some(value) = child.get_value() {
-                    let Value::Bool(checked) = value else {
-                      return Signal::Wait;
-                    };
-                    if let Some(part) = device.partition_by_id_mut(self.part_id) {
-                      if checked {
-                        part.add_flag("boot");
-                      } else {
-                        part.remove_flag("boot");
-                      }
-                    }
-                  }
-                }
-                Signal::Wait
-              }
-              2 => {
-                if let Some(child) = self.buttons.focused_child_mut() {
-                  child.interact();
-                  if let Some(value) = child.get_value() {
-                    let Value::Bool(checked) = value else {
-                      return Signal::Wait;
-                    };
-                    if let Some(part) = device.partition_by_id_mut(self.part_id) {
-                      if checked {
-                        part.add_flag("esp");
-                      } else {
-                        part.remove_flag("esp");
-                      }
-                    }
-                  }
-                }
-                Signal::Wait
-              }
-              3 => {
-                if let Some(child) = self.buttons.focused_child_mut() {
-                  child.interact();
-                  if let Some(value) = child.get_value() {
-                    let Value::Bool(checked) = value else {
-                      return Signal::Wait;
-                    };
-                    if let Some(part) = device.partition_by_id_mut(self.part_id) {
-                      if checked {
-                        part.add_flag("bls_boot");
-                      } else {
-                        part.remove_flag("bls_boot");
-                      }
-                    }
-                  }
-                }
-                Signal::Wait
-              }
-              4 => {
-                // Change Filesystem
-                Signal::Push(Box::new(SelectFilesystem::new(Some(self.part_id))))
-              }
-              5 => {
-                // Set Label
-                Signal::Push(Box::new(SetLabel::new(self.part_id)))
-              }
-              6 => {
-                // Delete Partition
-                if let Some(part) = device.partition_by_id_mut(self.part_id) {
-                  part.set_status(PartStatus::Delete);
-                }
-                if let Err(e) = device.remove_partition(self.part_id) {
-                  return Signal::Error(anyhow::anyhow!("{}", e));
-                };
-                Signal::Pop
-              }
-              7 => {
-                // Back
-                Signal::Pop
-              }
-              _ => Signal::Wait,
-            }
-          }
-          _ => Signal::Wait,
-        }
-      }
-      _ => Signal::Wait,
-    }
-  }
+	fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
+		match &self.part_status {
+			PartStatus::Exists => {
+				self.render_existing_part(f, area);
+			}
+			PartStatus::Modify | PartStatus::Create => {
+				self.render_modify_part(f, area);
+			}
+			PartStatus::Delete => {
+				self.render_delete_part(f, area);
+			}
+			_ => {
+				let info_box = InfoBox::new(
+					"Alter Partition",
+					styled_block(vec![
+						vec![(None, "The partition status is unknown. No actions can be performed on this partition.")],
+					])
+				);
+				info_box.render(f, area);
+			}
+		}
+	}
+	fn handle_input(&mut self, installer: &mut Installer, event: KeyEvent) -> Signal {
+		match event.code {
+			ui_back!() => Signal::Pop,
+			ui_up!() => {
+				self.buttons.prev_child();
+				Signal::Wait
+			}
+			ui_down!() => {
+				self.buttons.next_child();
+				Signal::Wait
+			}
+			ui_enter!() => {
+				if self.part_status == PartStatus::Delete {
+					return Signal::Pop
+				}
+				let Some(idx) = self.buttons.selected_child() else {
+					return Signal::Wait;
+				};
+				let Some(ref mut device) = installer.drive_config else {
+					return Signal::Error(anyhow::anyhow!("No drive config available for altering partition"));
+				};
+				match self.part_status {
+					PartStatus::Exists => {
+						let Some(part) = device.partition_by_id_mut(self.part_id) else {
+							return Signal::Error(anyhow::anyhow!("No partition found with id {}", self.part_id));
+						};
+						match idx {
+							0 => {
+								// Set Mount Point
+								Signal::Push(Box::new(SetMountPoint::new(self.part_id)))
+							}
+							1 => {
+								// Mark For Modification
+								part.set_status(PartStatus::Modify);
+								Signal::Pop
+							}
+							2 => {
+								// Delete Partition
+								part.set_status(PartStatus::Delete);
+								device.calculate_free_space();
+								Signal::Pop
+							}
+							3 => {
+								// Back
+								Signal::Pop
+							}
+							_ => Signal::Wait,
+						}
+					}
+					PartStatus::Modify => {
+						match idx {
+							0 => {
+								// Set Mount Point
+								Signal::Push(Box::new(SetMountPoint::new(self.part_id)))
+							}
+							1 => {
+								if let Some(child) = self.buttons.focused_child_mut() {
+									child.interact();
+									if let Some(value) = child.get_value() {
+										let Value::Bool(checked) = value else {
+											return Signal::Wait;
+										};
+										if let Some(part) = device.partition_by_id_mut(self.part_id) {
+											if checked {
+												part.add_flag("boot");
+											} else {
+												part.remove_flag("boot");
+											}
+										}
+									}
+								}
+								Signal::Wait
+							}
+							2 => {
+								if let Some(child) = self.buttons.focused_child_mut() {
+									child.interact();
+									if let Some(value) = child.get_value() {
+										let Value::Bool(checked) = value else {
+											return Signal::Wait;
+										};
+										if let Some(part) = device.partition_by_id_mut(self.part_id) {
+											if checked {
+												part.add_flag("esp");
+											} else {
+												part.remove_flag("esp");
+											}
+										}
+									}
+								}
+								Signal::Wait
+							}
+							3 => {
+								if let Some(child) = self.buttons.focused_child_mut() {
+									child.interact();
+									if let Some(value) = child.get_value() {
+										let Value::Bool(checked) = value else {
+											return Signal::Wait;
+										};
+										if let Some(part) = device.partition_by_id_mut(self.part_id) {
+											if checked {
+												part.add_flag("bls_boot");
+											} else {
+												part.remove_flag("bls_boot");
+											}
+										}
+									}
+								}
+								Signal::Wait
+							}
+							4 => {
+								// Change Filesystem
+								Signal::Push(Box::new(SelectFilesystem::new(Some(self.part_id))))
+							}
+							5 => {
+								// Set Label
+								Signal::Push(Box::new(SetLabel::new(self.part_id)))
+							}
+							6 => {
+								// Unmark for modification
+								if let Some(part) = device.partition_by_id_mut(self.part_id) {
+									part.set_status(PartStatus::Exists);
+								}
+								Signal::Pop
+							}
+							7 => {
+								// Delete Partition
+								if let Some(part) = device.partition_by_id_mut(self.part_id) {
+									part.set_status(PartStatus::Delete);
+								}
+								Signal::Pop
+							}
+							8 => {
+								// Back
+								Signal::Pop
+							}
+							_ => Signal::Wait,
+						}
+					}
+					PartStatus::Create => {
+						match idx {
+							0 => {
+								// Set Mount Point
+								Signal::Push(Box::new(SetMountPoint::new(self.part_id)))
+							}
+							1 => {
+								if let Some(child) = self.buttons.focused_child_mut() {
+									child.interact();
+									if let Some(value) = child.get_value() {
+										let Value::Bool(checked) = value else {
+											return Signal::Wait;
+										};
+										if let Some(part) = device.partition_by_id_mut(self.part_id) {
+											if checked {
+												part.add_flag("boot");
+											} else {
+												part.remove_flag("boot");
+											}
+										}
+									}
+								}
+								Signal::Wait
+							}
+							2 => {
+								if let Some(child) = self.buttons.focused_child_mut() {
+									child.interact();
+									if let Some(value) = child.get_value() {
+										let Value::Bool(checked) = value else {
+											return Signal::Wait;
+										};
+										if let Some(part) = device.partition_by_id_mut(self.part_id) {
+											if checked {
+												part.add_flag("esp");
+											} else {
+												part.remove_flag("esp");
+											}
+										}
+									}
+								}
+								Signal::Wait
+							}
+							3 => {
+								if let Some(child) = self.buttons.focused_child_mut() {
+									child.interact();
+									if let Some(value) = child.get_value() {
+										let Value::Bool(checked) = value else {
+											return Signal::Wait;
+										};
+										if let Some(part) = device.partition_by_id_mut(self.part_id) {
+											if checked {
+												part.add_flag("bls_boot");
+											} else {
+												part.remove_flag("bls_boot");
+											}
+										}
+									}
+								}
+								Signal::Wait
+							}
+							4 => {
+								// Change Filesystem
+								Signal::Push(Box::new(SelectFilesystem::new(Some(self.part_id))))
+							}
+							5 => {
+								// Set Label
+								Signal::Push(Box::new(SetLabel::new(self.part_id)))
+							}
+							6 => {
+								// Delete Partition
+								if let Some(part) = device.partition_by_id_mut(self.part_id) {
+									part.set_status(PartStatus::Delete);
+								}
+								if let Err(e) = device.remove_partition(self.part_id) {
+									return Signal::Error(anyhow::anyhow!("{}", e));
+								};
+								Signal::Pop
+							}
+							7 => {
+								// Back
+								Signal::Pop
+							}
+							_ => Signal::Wait,
+						}
+					}
+					_ => Signal::Wait
+				}
+			}
+			_ => Signal::Wait,
+		}
+	}
 }
 
 pub struct SetMountPoint {

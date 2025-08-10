@@ -21,7 +21,7 @@ use ratatui::{
 };
 use serde_json::Value;
 
-use crate::installer::Signal;
+use crate::{installer::Signal, ui_down, ui_up};
 
 pub trait ConfigWidget {
   fn render(&self, f: &mut Frame, area: Rect);
@@ -1760,87 +1760,81 @@ impl TableWidget {
 }
 
 impl ConfigWidget for TableWidget {
-  fn handle_input(&mut self, key: KeyEvent) -> Signal {
-    if let Some(_idx) = self.selected_row.as_mut() {
-      match key.code {
-        KeyCode::Up | KeyCode::Char('k') => {
-          self.next_row();
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-          self.previous_row();
-        }
-        _ => {}
-      }
-      Signal::Wait
-    } else {
-      self.selected_row = Some(0);
-      self.handle_input(key)
-    }
-  }
+	fn handle_input(&mut self, key: KeyEvent) -> Signal {
+		if let Some(_idx) = self.selected_row.as_mut() {
+			match key.code {
+				ui_up!() => {
+					self.next_row();
+				}
+				ui_down!() => {
+					self.previous_row();
+				}
+				_ => {}
+			}
+			Signal::Wait
+		} else {
+			self.selected_row = Some(0);
+			self.handle_input(key)
+		}
+	}
 
-  fn focus(&mut self) {
-    self.focused = true;
-    if self.selected_row.is_none() {
-      self.selected_row = Some(0);
-    }
-  }
-  fn is_focused(&self) -> bool {
-    self.focused
-  }
+	fn focus(&mut self) {
+		self.focused = true;
+		if self.selected_row.is_none() {
+			self.selected_row = Some(0);
+		}
+	}
+	fn is_focused(&self) -> bool {
+		self.focused
+	}
 
-  fn unfocus(&mut self) {
-    self.focused = false;
-  }
+	fn unfocus(&mut self) {
+		self.focused = false;
+	}
 
-  fn render(&self, f: &mut Frame, area: Rect) {
-    let header_cells = self.headers.iter().map(|h| {
-      Span::styled(
-        h.clone(),
-        Style::default()
-          .fg(Color::Yellow)
-          .add_modifier(Modifier::BOLD),
-      )
-    });
-    let header = ratatui::widgets::Row::new(header_cells)
-      .style(Style::default().bg(Color::DarkGray))
-      .height(1)
-      .bottom_margin(1);
+	fn render(&self, f: &mut Frame, area: Rect) {
+		let header_cells = self.headers.iter().map(|h| {
+			Span::styled(
+				h.clone(),
+				Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+			)
+		});
+		let header = ratatui::widgets::Row::new(header_cells)
+			.style(Style::default().bg(Color::DarkGray))
+			.height(1)
+			.bottom_margin(1);
 
-    let rows = self.rows.iter().map(|item| {
-      let cells = item.iter().map(|c| Span::raw(c.clone()));
-      ratatui::widgets::Row::new(cells).height(1)
-    });
+		let rows = self.rows.iter().map(|item| {
+			let cells = item.iter().map(|c| Span::raw(c.clone()));
+			ratatui::widgets::Row::new(cells).height(1)
+		});
 
-    let mut state = TableState::default();
-    if self.selected_row.is_some_and(|idx| idx >= self.rows.len()) {
-      state.select(None);
-    } else {
-      state.select(self.selected_row);
-    }
+		let mut state = TableState::default();
+		if self.selected_row.is_some_and(|idx| idx >= self.rows.len()) {
+			state.select(None);
+		} else {
+			state.select(self.selected_row);
+		}
 
-    let hl_style = if self.focused {
-      Style::default()
-        .bg(Color::Cyan)
-        .fg(Color::Black)
-        .add_modifier(Modifier::BOLD)
-    } else {
-      Style::default()
-    };
+		let hl_style = if self.focused {
+			Style::default()
+				.bg(Color::Cyan)
+				.fg(Color::Black)
+				.add_modifier(Modifier::BOLD)
+		} else {
+			Style::default()
+		};
 
-    let table = Table::new(rows, &self.widths)
-      .header(header)
-      .block(
-        Block::default()
-          .title(self.title.clone())
-          .borders(Borders::ALL),
-      )
-      .widths(&self.widths)
-      .column_spacing(1)
-      .row_highlight_style(hl_style)
-      .highlight_symbol(">> ");
+		let table = Table::new(rows, &self.widths)
+			.header(header)
+			.block(Block::default().title(self.title.clone()).borders(Borders::ALL))
+			.widths(&self.widths)
+			.column_spacing(1)
+			.row_highlight_style(hl_style)
+			.highlight_symbol(">> ");
 
-    f.render_stateful_widget(table, area, &mut state);
-  }
+		f.render_stateful_widget(table, area, &mut state);
+	}
 }
 
 pub struct HelpModal<'a> {
