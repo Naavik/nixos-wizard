@@ -13,10 +13,11 @@ If not, make sure you have cargo installed. Also, run cargo fmt before you make 
 
 ## nixos-wizard Architecture Overview
 
-The program itself has three core components:
-	1. The event loop - manages current UI and installer state
-	2. The `Page` trait - defines the main UI screens, essentially containers for widgets
-	3. The `ConfigWidget` trait - re-usable UI components that make up pages
+The program itself has three core components: 
+
+1. The event loop - manages current UI and installer state 
+2. The `Page` trait - defines the main UI screens, essentially containers for widgets 
+3. The `ConfigWidget` trait - re-usable UI components that make up pages 
 
 ### The event loop
 The event loop contains a stack of `Box<dyn Page>`, and whenever a page is entered, that page is pushed onto the stack. Whenever a page is exited, that page is popped from the stack. Every iteration of the event loop does two things:
