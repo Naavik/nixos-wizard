@@ -1,6 +1,6 @@
 <h1 align="center">nixos-wizard</h1>
 <h6 align="center">
-  A modern terminal-based NixOS installer with an interactive TUI, inspired by Arch Linux’s
+  A modern terminal-based NixOS installer, inspired by Arch Linux’s
   <a href="https://github.com/archlinux/archinstall">archinstall</a>.
 </h6>
 
