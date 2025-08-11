@@ -1,9 +1,12 @@
 use crate::{split_hor, split_vert};
+use itertools::Itertools;
 use portable_pty::{CommandBuilder, PtySize};
 use std::{
   collections::VecDeque,
-  io::{BufRead, BufReader, Read},
+  fs::{File, OpenOptions},
+  io::{BufRead, BufReader, Read, Seek, SeekFrom},
   os::fd::{FromRawFd, IntoRawFd, OwnedFd},
+  path::PathBuf,
   process::{Child, ChildStderr, ChildStdout, Command, Stdio},
 };
 use throbber_widgets_tui::{BOX_DRAWING, ThrobberState};
@@ -2411,5 +2414,185 @@ impl ConfigWidget for ProgressBar {
   }
   fn is_focused(&self) -> bool {
     false
+  }
+}
+
+pub struct LogBox<'a> {
+  title: String,
+  focused: bool,
+  pub line_buf: VecDeque<Line<'a>>,
+  max_buf_size: usize,
+  log_file: Option<File>,
+  reader: Option<BufReader<File>>,
+  file_pos: u64,
+  log_path: Option<PathBuf>,
+}
+
+impl<'a> LogBox<'a> {
+  pub fn new(title: String) -> Self {
+    let line_buf = std::iter::repeat_n(String::new().into(), 100)
+      .collect::<Vec<_>>()
+      .into();
+    Self {
+      title,
+      focused: false,
+      line_buf,
+      max_buf_size: 100,
+      log_file: None,
+      reader: None,
+      file_pos: 0,
+      log_path: None,
+    }
+  }
+
+  pub fn open_log<P: Into<PathBuf>>(&mut self, path: P) -> anyhow::Result<()> {
+    let path = path.into();
+
+    // Open the file for read/write, create if missing, but don't truncate
+    let file = OpenOptions::new()
+      .read(true)
+      .write(true)
+      .create(true)
+      .truncate(false)
+      .open(&path)?;
+
+    let file_pos = file.metadata()?.len(); // start reading at EOF
+    let reader = BufReader::new(file.try_clone()?);
+    self.log_file = Some(file);
+    self.reader = Some(reader);
+    self.file_pos = file_pos;
+    self.log_path = Some(path);
+    Ok(())
+  }
+
+  /// Call this periodically (e.g. once per render tick) to read new lines from
+  /// the log file
+  pub fn poll_log(&mut self) -> anyhow::Result<()> {
+    let Some(path) = &self.log_path else {
+      return Ok(());
+    };
+
+    // Check if file exists, if not return early
+    if !path.exists() {
+      return Ok(());
+    }
+
+    // Get current file size
+    let current_size = std::fs::metadata(path)?.len();
+
+    // If file was truncated/rotated, reset position and reopen file
+    if current_size < self.file_pos {
+      self.file_pos = 0;
+      // Reopen the file since it was truncated
+      let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?;
+      let reader = BufReader::new(file.try_clone()?);
+      self.log_file = Some(file);
+      self.reader = Some(reader);
+    }
+
+    // If no new data, return early
+    if current_size <= self.file_pos {
+      return Ok(());
+    }
+
+    // Use existing reader, seeking to our position if needed
+    let reader = match &mut self.reader {
+      Some(reader) => reader,
+      None => {
+        // If no reader exists, create one
+        let file = OpenOptions::new()
+          .read(true)
+          .write(true)
+          .create(true)
+          .truncate(false)
+          .open(path)?;
+        let reader = BufReader::new(file.try_clone()?);
+        self.log_file = Some(file);
+        self.reader = Some(reader);
+        self.reader.as_mut().unwrap()
+      }
+    };
+
+    reader.seek(SeekFrom::Start(self.file_pos))?;
+
+    // Read all new lines
+    let mut line = String::new();
+    while reader.read_line(&mut line)? > 0 {
+      let trimmed = strip_ansi_escapes::strip_str(line.trim_end());
+
+      // Skip script wrapper lines
+      if let Ok(text) = trimmed.into_text() {
+        for parsed_line in text.lines {
+          self.line_buf.push_back(parsed_line);
+          if self.line_buf.len() > self.max_buf_size {
+            self.line_buf.pop_front();
+          }
+        }
+      } else {
+        self.line_buf.push_back(trimmed.to_string().into());
+        if self.line_buf.len() > self.max_buf_size {
+          self.line_buf.pop_front();
+        }
+      }
+
+      line.clear();
+    }
+
+    // Update our position to current end of file
+    self.file_pos = current_size;
+    Ok(())
+  }
+  pub fn write_log(&mut self, log_output: &str) {
+    if let Ok(text) = log_output.into_text() {
+      for line in text.lines {
+        self.line_buf.push_back(line);
+        if self.line_buf.len() > self.max_buf_size {
+          self.line_buf.pop_front();
+        }
+      }
+    } else {
+      self.line_buf.push_back(log_output.to_string().into());
+      if self.line_buf.len() > self.max_buf_size {
+        self.line_buf.pop_front();
+      }
+    }
+  }
+}
+
+impl<'a> ConfigWidget for LogBox<'a> {
+  fn handle_input(&mut self, _key: KeyEvent) -> Signal {
+    Signal::Wait
+  }
+  fn render(&self, f: &mut Frame, area: Rect) {
+    let lines = self.line_buf.iter().cloned().collect::<Vec<Line>>();
+    let rows = area.height.saturating_sub(2) as usize;
+    let visible_lines = lines
+      .iter()
+      .skip(lines.len().saturating_sub(rows))
+      .cloned()
+      .collect::<Vec<Line>>();
+    let paragraph = Paragraph::new(visible_lines)
+      .block(
+        Block::default()
+          .title(self.title.clone())
+          .borders(Borders::ALL),
+      )
+      .wrap(ratatui::widgets::Wrap { trim: true });
+
+    f.render_widget(paragraph, area);
+  }
+  fn focus(&mut self) {
+    self.focused = true;
+  }
+  fn unfocus(&mut self) {
+    self.focused = false;
+  }
+  fn is_focused(&self) -> bool {
+    self.focused
   }
 }

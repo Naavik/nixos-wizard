@@ -29,8 +29,8 @@ use crate::{
   split_hor, split_vert, styled_block, ui_back, ui_close, ui_down, ui_enter, ui_left, ui_right,
   ui_up,
   widget::{
-    Button, CheckBox, ConfigWidget, HelpModal, InfoBox, InstallSteps, LineEditor, ProgressBar,
-    StrList, WidgetBox, WidgetBoxBuilder,
+    Button, CheckBox, ConfigWidget, HelpModal, InfoBox, InstallSteps, LineEditor, LogBox,
+    ProgressBar, StrList, WidgetBox, WidgetBoxBuilder,
   },
 };
 
@@ -3812,6 +3812,7 @@ impl Page for ConfigPreview {
 pub struct InstallProgress<'a> {
   _installer: Installer,
   steps: InstallSteps<'a>,
+  log_box: LogBox<'a>,
   progress_bar: ProgressBar,
   help_modal: HelpModal<'static>,
   signal: Option<Signal>,
@@ -3819,6 +3820,7 @@ pub struct InstallProgress<'a> {
   // we only hold onto these to keep them alive during installation
   _system_cfg: NamedTempFile,
   _disko_cfg: NamedTempFile,
+  _log_file: NamedTempFile,
 }
 
 impl<'a> InstallProgress<'a> {
@@ -3827,6 +3829,12 @@ impl<'a> InstallProgress<'a> {
     system_cfg: NamedTempFile,
     disko_cfg: NamedTempFile,
   ) -> anyhow::Result<Self> {
+    let log_file = NamedTempFile::new()?;
+    let log_path = log_file
+      .path()
+      .to_str()
+      .ok_or_else(|| anyhow::anyhow!("Invalid log file path"))?
+      .to_string();
     let install_steps = Self::install_commands(
       &installer,
       system_cfg
@@ -3839,8 +3847,9 @@ impl<'a> InstallProgress<'a> {
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("Invalid disko config path"))?
         .to_string(),
+      log_path.clone(),
     )?;
-    let steps = InstallSteps::new("Installing NixOS", install_steps);
+    let steps = InstallSteps::new("Install Steps", install_steps);
     let progress_bar = ProgressBar::new("Progress", 0);
 
     let help_content = styled_block(vec![
@@ -3868,14 +3877,19 @@ impl<'a> InstallProgress<'a> {
     ]);
     let help_modal = HelpModal::new("Installation Progress", help_content);
 
+    let mut log_box = LogBox::new("Logs".into());
+    log_box.open_log(log_path)?;
+
     Ok(Self {
       _installer: installer,
       steps,
       progress_bar,
+      log_box,
       help_modal,
       signal: None,
       _system_cfg: system_cfg,
       _disko_cfg: disko_cfg,
+      _log_file: log_file,
     })
   }
 
@@ -3892,40 +3906,43 @@ impl<'a> InstallProgress<'a> {
     _installer: &Installer,
     system_cfg_path: String,
     disk_cfg_path: String,
+    log_file_path: String,
   ) -> anyhow::Result<Vec<(Line<'static>, VecDeque<Command>)>> {
     Ok(vec![
 			(Line::from("Beginning NixOS Installation..."),
-			 vec![
-				 command!("echo", "Beginning NixOS Installation..."),
-				 command!("sleep", "1")
-			 ].into()),
+			vec![
+			command!("sh", "-c", format!("echo Beginning NixOS Installation... 2>&1 > {log_file_path}")),
+			command!("sleep", "1"),
+			].into()),
 			(Line::from("Configuring disk layout..."),
-			 vec![
-				command!("echo", "Partitioning disks..."),
-				command!("sh", "-c", format!("disko --yes-wipe-all-disks --mode destroy,format,mount {disk_cfg_path} 2>&1 > /dev/null")),
-			 ].into()),
+			vec![
+			command!("sh", "-c", format!("echo Partitioning disks... 2>&1 > {log_file_path}")),
+			command!("sh", "-c", format!("disko --yes-wipe-all-disks --mode destroy,format,mount {disk_cfg_path} 2>&1 > {log_file_path}")),
+			].into()),
 			(Line::from("Building NixOS configuration..."),
-			 vec![
-				command!("sh", "-c", "nixos-generate-config --root /mnt"),
-				command!("cp", format!("{system_cfg_path}"), "/mnt/etc/nixos/configuration.nix"),
-				command!("echo", "Build completed")
-			 ].into()),
+			vec![
+			command!("sh", "-c", format!("echo Building NixOS configuration... 2>&1 > {log_file_path}")),
+			command!("sh", "-c", format!("nixos-generate-config --root /mnt 2>&1 > {log_file_path}")),
+			command!("sh", "-c", format!("cp -v {system_cfg_path} /mnt/etc/nixos/configuration.nix 2>&1 > {log_file_path}")),
+			command!("sh", "-c", format!("echo Build completed 2>&1 > {log_file_path}")),
+			].into()),
 			(Line::from("Installing NixOS..."),
-			 vec![
-				command!("sh", "-c", "nixos-install --root /mnt"),
-			 ].into()),
+			vec![
+			command!("sh", "-c", format!("echo Installing NixOS... 2>&1 > {log_file_path}")),
+			command!("sh", "-c", format!("nixos-install --root /mnt 2>&1 > {log_file_path}")),
+			].into()),
 			(Line::from("Importing channels..."),
-			 vec![
-				command!("nixos-enter", "--", "nix-channel", "--add", "https://nixos.org/channels/nixos-unstable", "nixos"),
-				command!("nixos-enter", "--", "nix-channel", "--update")
+			vec![
+			command!("sh", "-c", format!("echo Importing NixOS channels... 2>&1 > {log_file_path}")),
+			command!("sh", "-c", format!("nixos-enter -- nix-channel --add https://nixos.org/channels/nixos-unstable nixos 2>&1 > {log_file_path}")),
+			command!("sh", "-c", format!("nixos-enter -- nix-channel --update 2>&1 > {log_file_path}")),
 			].into()),
 			(Line::from("Finalizing installation..."),
-			 vec![
-				command!("sleep", "1"),
-				// TODO: Actually do something here?
-				command!("echo", "Installation complete!")
-			 ].into()),
-		])
+			vec![
+			command!("sleep", "1"),
+			command!("sh", "-c", format!("echo Installation complete! 2>&1 > {log_file_path}")),
+			].into()),
+			])
   }
 }
 
@@ -3933,11 +3950,18 @@ impl<'a> Page for InstallProgress<'a> {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
     // Tick the steps to update animation and process commands
     let _ = self.steps.tick();
+    let _ = self.log_box.poll_log();
 
     let chunks = split_vert!(area, 1, [Constraint::Min(0), Constraint::Length(3)]);
+    let hor_chunks = split_hor!(
+      chunks[0],
+      1,
+      [Constraint::Percentage(30), Constraint::Percentage(70)]
+    );
 
     // Render InstallSteps widget in the main area
-    self.steps.render(f, chunks[0]);
+    self.steps.render(f, hor_chunks[0]);
+    self.log_box.render(f, hor_chunks[1]);
 
     // Update progress bar with completion percentage
     let progress = (self.steps.progress() * 100.0) as u32;
