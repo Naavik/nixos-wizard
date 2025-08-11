@@ -114,3 +114,28 @@ macro_rules! ui_right {
     KeyCode::Right | KeyCode::Char('l')
   };
 }
+
+#[macro_export]
+macro_rules! split_vert {
+  ($area:expr, $margin:expr, $constraints:expr) => {{
+    use ratatui::layout::{Constraint, Direction, Layout};
+    Layout::default()
+      .direction(Direction::Vertical)
+      .margin($margin)
+      .constraints($constraints)
+      .split($area)
+  }};
+}
+
+#[macro_export]
+/// Splits an area horizontally with margin
+macro_rules! split_hor {
+  ($area:expr, $margin:expr, $constraints:expr) => {{
+    use ratatui::layout::{Constraint, Direction, Layout};
+    Layout::default()
+      .direction(Direction::Horizontal)
+      .margin($margin)
+      .constraints($constraints)
+      .split($area)
+  }};
+}

@@ -1,3 +1,4 @@
+use crate::{split_hor, split_vert};
 use portable_pty::{CommandBuilder, PtySize};
 use std::{
   collections::VecDeque,
@@ -774,10 +775,7 @@ impl ConfigWidget for LineEditor {
   }
 
   fn render(&self, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(ratatui::layout::Direction::Vertical)
-      .constraints(vec![Constraint::Min(3), Constraint::Length(3)])
-      .split(area);
+    let chunks = split_vert!(area, 0, [Constraint::Min(3), Constraint::Length(3)]);
     if let Some(err) = &self.error {
       let error_paragraph = Paragraph::new(Span::styled(
         err.clone(),
@@ -2177,36 +2175,27 @@ impl PackagePicker {
 
 impl ConfigWidget for PackagePicker {
   fn render(&self, f: &mut Frame, area: Rect) {
-    let hor_chunks = ratatui::layout::Layout::default()
-      .direction(ratatui::layout::Direction::Horizontal)
-      .constraints(
-        [
-          ratatui::layout::Constraint::Percentage(50),
-          ratatui::layout::Constraint::Percentage(50),
-        ]
-        .as_ref(),
-      )
-      .split(area);
-    let vert_chunks_left = ratatui::layout::Layout::default()
-      .direction(ratatui::layout::Direction::Vertical)
-      .constraints(
-        [
-          ratatui::layout::Constraint::Length(5),
-          ratatui::layout::Constraint::Min(0),
-        ]
-        .as_ref(),
-      )
-      .split(hor_chunks[0]);
-    let vert_chunks_right = ratatui::layout::Layout::default()
-      .direction(ratatui::layout::Direction::Vertical)
-      .constraints(
-        [
-          ratatui::layout::Constraint::Length(5),
-          ratatui::layout::Constraint::Min(0),
-        ]
-        .as_ref(),
-      )
-      .split(hor_chunks[1]);
+    let hor_chunks = split_hor!(
+      area, 0,
+      [
+        Constraint::Percentage(50),
+        Constraint::Percentage(50),
+      ]
+    );
+    let vert_chunks_left = split_vert!(
+      hor_chunks[0], 0,
+      [
+        Constraint::Length(5),
+        Constraint::Min(0),
+      ]
+    );
+    let vert_chunks_right = split_vert!(
+      hor_chunks[1], 0,
+      [
+        Constraint::Length(5),
+        Constraint::Min(0),
+      ]
+    );
 
     self.selected.render(f, vert_chunks_left[1]);
     self.search_bar.render(f, vert_chunks_right[0]);

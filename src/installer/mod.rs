@@ -26,7 +26,8 @@ use crate::{
     users::User,
   },
   nixgen::highlight_nix,
-  styled_block, ui_back, ui_close, ui_down, ui_enter, ui_left, ui_right, ui_up,
+  split_hor, split_vert, styled_block, ui_back, ui_close, ui_down, ui_enter, ui_left, ui_right,
+  ui_up,
   widget::{
     Button, CheckBox, ConfigWidget, HelpModal, InfoBox, InstallSteps, LineEditor, ProgressBar,
     StrList, WidgetBox, WidgetBoxBuilder,
@@ -552,11 +553,10 @@ impl Default for Menu {
 
 impl Page for Menu {
   fn render(&mut self, installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .margin(1)
-      .constraints([Constraint::Percentage(20), Constraint::Percentage(80)].as_ref())
-      .split(area);
+    let chunks = split_hor!(
+      area, 1,
+      [Constraint::Percentage(20), Constraint::Percentage(80)].as_ref()
+    );
 
     // We use this for both the menu options and info box
     // so that it looks visually consistent :)
@@ -878,30 +878,22 @@ impl Default for SourceFlake {
 
 impl Page for SourceFlake {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints(
-        [
-          Constraint::Percentage(40),
-          Constraint::Length(5),
-          Constraint::Percentage(40),
-        ]
-        .as_ref(),
-      )
-      .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .margin(1)
-      .constraints(
-        [
-          Constraint::Percentage(10),
-          Constraint::Percentage(80),
-          Constraint::Percentage(10),
-        ]
-        .as_ref(),
-      )
-      .split(chunks[1]);
+    let chunks = split_vert!(
+      area, 1,
+      [
+        Constraint::Percentage(40),
+        Constraint::Length(5),
+        Constraint::Percentage(40),
+      ]
+    );
+    let hor_chunks = split_hor!(
+      chunks[1], 1,
+      [
+        Constraint::Percentage(10),
+        Constraint::Percentage(80),
+        Constraint::Percentage(10),
+      ]
+    );
 
     let info_box = InfoBox::new(
       "",
@@ -1078,11 +1070,7 @@ impl Default for Language {
 
 impl Page for Language {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints([Constraint::Percentage(100)].as_ref())
-      .split(area);
+    let chunks = split_vert!(area, 1, [Constraint::Percentage(100)]);
     self.langs.render(f, chunks[0]);
     self.help_modal.render(f, area);
   }
@@ -1228,11 +1216,7 @@ impl Default for KeyboardLayout {
 
 impl Page for KeyboardLayout {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints([Constraint::Percentage(100)].as_ref())
-      .split(area);
+    let chunks = split_vert!(area, 1, [Constraint::Percentage(100)]);
     self.layouts.render(f, chunks[0]);
     self.help_modal.render(f, area);
   }
@@ -1388,11 +1372,7 @@ impl Default for Locale {
 
 impl Page for Locale {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints([Constraint::Percentage(100)].as_ref())
-      .split(area);
+    let chunks = split_vert!(area, 1, [Constraint::Percentage(100)]);
     self.locales.render(f, chunks[0]);
     self.help_modal.render(f, area);
   }
@@ -1540,23 +1520,18 @@ impl Default for EnableFlakes {
 
 impl Page for EnableFlakes {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
-      .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .margin(1)
-      .constraints(
-        [
-          Constraint::Percentage(30),
-          Constraint::Percentage(40),
-          Constraint::Percentage(30),
-        ]
-        .as_ref(),
-      )
-      .split(chunks[1]);
+    let chunks = split_vert!(
+      area, 1,
+      [Constraint::Percentage(40), Constraint::Percentage(60)]
+    );
+    let hor_chunks = split_hor!(
+      chunks[1], 1,
+      [
+        Constraint::Percentage(30),
+        Constraint::Percentage(40),
+        Constraint::Percentage(30),
+      ]
+    );
     let info_box = InfoBox::new(
       "",
       styled_block(vec![
@@ -1728,11 +1703,7 @@ impl Default for Bootloader {
 
 impl Page for Bootloader {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints([Constraint::Percentage(100)].as_ref())
-      .split(area);
+    let chunks = split_vert!(area, 1, [Constraint::Percentage(100)]);
     self.loaders.render(f, chunks[0]);
     self.help_modal.render(f, area);
   }
@@ -1883,23 +1854,18 @@ impl Default for Swap {
 
 impl Page for Swap {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
-      .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .margin(1)
-      .constraints(
-        [
-          Constraint::Percentage(30),
-          Constraint::Percentage(40),
-          Constraint::Percentage(30),
-        ]
-        .as_ref(),
-      )
-      .split(chunks[1]);
+    let chunks = split_vert!(
+      area, 1,
+      [Constraint::Percentage(40), Constraint::Percentage(60)]
+    );
+    let hor_chunks = split_hor!(
+      chunks[1], 1,
+      [
+        Constraint::Percentage(30),
+        Constraint::Percentage(40),
+        Constraint::Percentage(30),
+      ]
+    );
     let info_box = InfoBox::new(
       "",
       styled_block(vec![
@@ -2076,30 +2042,22 @@ impl Default for Hostname {
 
 impl Page for Hostname {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints(
-        [
-          Constraint::Percentage(40),
-          Constraint::Length(5),
-          Constraint::Percentage(40),
-        ]
-        .as_ref(),
-      )
-      .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .margin(1)
-      .constraints(
-        [
-          Constraint::Percentage(10),
-          Constraint::Percentage(80),
-          Constraint::Percentage(10),
-        ]
-        .as_ref(),
-      )
-      .split(chunks[1]);
+    let chunks = split_vert!(
+      area, 1,
+      [
+        Constraint::Percentage(40),
+        Constraint::Length(5),
+        Constraint::Percentage(40),
+      ]
+    );
+    let hor_chunks = split_hor!(
+      chunks[1], 0,
+      [
+        Constraint::Percentage(10),
+        Constraint::Percentage(80),
+        Constraint::Percentage(10),
+      ]
+    );
 
     let info_box = InfoBox::new(
       "",
@@ -2309,35 +2267,26 @@ impl Default for RootPassword {
 
 impl Page for RootPassword {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints(
-        [
-          Constraint::Percentage(40),
-          Constraint::Length(10),
-          Constraint::Percentage(40),
-        ]
-        .as_ref(),
-      )
-      .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .margin(1)
-      .constraints(
-        [
-          Constraint::Percentage(10),
-          Constraint::Percentage(80),
-          Constraint::Percentage(10),
-        ]
-        .as_ref(),
-      )
-      .split(chunks[1]);
-    let vert_chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(0)
-      .constraints([Constraint::Length(5), Constraint::Length(5)].as_ref())
-      .split(hor_chunks[1]);
+    let chunks = split_vert!(
+      area, 1,
+      [
+        Constraint::Percentage(40),
+        Constraint::Length(12),
+        Constraint::Percentage(40),
+      ]
+    );
+    let hor_chunks = split_hor!(
+      chunks[1], 1,
+      [
+        Constraint::Percentage(20),
+        Constraint::Percentage(60),
+        Constraint::Percentage(20),
+      ]
+    );
+    let vert_chunks = split_vert!(
+      hor_chunks[1], 0,
+      [Constraint::Length(5), Constraint::Length(5)]
+    );
 
     let info_box = InfoBox::new(
       "",
@@ -2572,11 +2521,7 @@ impl Default for Profile {
 
 impl Page for Profile {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints([Constraint::Percentage(100)].as_ref())
-      .split(area);
+    let chunks = split_vert!(area, 1, [Constraint::Percentage(100)]);
     self.profiles.render(f, chunks[0]);
     self.help_modal.render(f, area);
   }
@@ -2708,11 +2653,7 @@ impl Default for Greeter {
 
 impl Page for Greeter {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints([Constraint::Percentage(100)].as_ref())
-      .split(area);
+    let chunks = split_vert!(area, 1, [Constraint::Percentage(100)]);
     self.greeters.render(f, chunks[0]);
     self.help_modal.render(f, area);
   }
@@ -2859,11 +2800,7 @@ impl Default for DesktopEnvironment {
 
 impl Page for DesktopEnvironment {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints([Constraint::Percentage(100)].as_ref())
-      .split(area);
+    let chunks = split_vert!(area, 1, [Constraint::Percentage(100)]);
     self.desktops.render(f, chunks[0]);
     self.help_modal.render(f, area);
   }
@@ -3021,11 +2958,7 @@ impl Default for Kernels {
 
 impl Page for Kernels {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints([Constraint::Percentage(100)].as_ref())
-      .split(area);
+    let chunks = split_vert!(area, 1, [Constraint::Percentage(100)]);
     self.kernels.render(f, chunks[0]);
     self.help_modal.render(f, area);
   }
@@ -3162,11 +3095,7 @@ impl Default for Audio {
 
 impl Page for Audio {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints([Constraint::Percentage(100)].as_ref())
-      .split(area);
+    let chunks = split_vert!(area, 1, [Constraint::Percentage(100)]);
     self.backends.render(f, chunks[0]);
     self.help_modal.render(f, area);
   }
@@ -3319,11 +3248,7 @@ impl Default for Network {
 
 impl Page for Network {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints([Constraint::Percentage(100)].as_ref())
-      .split(area);
+    let chunks = split_vert!(area, 1, [Constraint::Percentage(100)]);
     self.backends.render(f, chunks[0]);
     self.help_modal.render(f, area);
   }
@@ -3484,11 +3409,7 @@ impl Default for Timezone {
 
 impl Page for Timezone {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints([Constraint::Percentage(100)].as_ref())
-      .split(area);
+    let chunks = split_vert!(area, 1, [Constraint::Percentage(100)]);
     self.timezones.render(f, chunks[0]);
     self.help_modal.render(f, area);
   }
@@ -3645,21 +3566,20 @@ impl ConfigPreview {
 
 impl Page for ConfigPreview {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints([
+    let chunks = split_vert!(
+      area, 1,
+      [
         Constraint::Length(3), // Tab bar
         Constraint::Min(0),    // Config content
         Constraint::Length(3), // Buttons
-      ])
-      .split(area);
+      ]
+    );
 
     // Tab bar for switching between system and disko config
-    let tab_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-      .split(chunks[0]);
+    let tab_chunks = split_hor!(
+      chunks[0], 0,
+      [Constraint::Percentage(50), Constraint::Percentage(50)]
+    );
 
     // System config tab
     let system_tab_style = if self.current_view == ConfigView::System {
@@ -4000,11 +3920,7 @@ impl<'a> Page for InstallProgress<'a> {
     // Tick the steps to update animation and process commands
     let _ = self.steps.tick();
 
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints([Constraint::Min(0), Constraint::Length(3)].as_ref())
-      .split(area);
+    let chunks = split_vert!(area, 1, [Constraint::Min(0), Constraint::Length(3)]);
 
     // Render InstallSteps widget in the main area
     self.steps.render(f, chunks[0]);
@@ -4125,11 +4041,7 @@ impl Default for InstallComplete {
 
 impl Page for InstallComplete {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(1)
-      .constraints([Constraint::Percentage(100)].as_ref())
-      .split(area);
+    let chunks = split_vert!(area, 1, [Constraint::Percentage(100)]);
     self.text_box.render(f, chunks[0]);
   }
 

@@ -24,6 +24,7 @@ use crate::installer::{InstallProgress, Installer, Menu, Page, Signal, systempkg
 
 pub mod drives;
 pub mod installer;
+#[macro_use]
 pub mod macros;
 pub mod nixgen;
 pub mod widget;
@@ -209,35 +210,35 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
 
   loop {
     terminal.draw(|f| {
-      let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
+      let chunks = split_vert!(
+        f.area(), 0,
+        [
           Constraint::Length(1), // Header height
           Constraint::Min(0),    // Rest of screen
-        ])
-        .split(f.area());
+        ]
+      );
 
       // Draw header with three columns: help text, title, empty
-      let header_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-          Constraint::Percentage(33), // Left section (empty)
+      let header_chunks = split_hor!(
+        chunks[0], 0,
+        [
+          Constraint::Percentage(33), // Left section (help)
           Constraint::Percentage(34), // Middle section (title)
-          Constraint::Percentage(33), // Right section (help)
-        ])
-        .split(chunks[0]);
+          Constraint::Percentage(33), // Right section (empty)
+        ]
+      );
+
+      // Help text on left
+      let help_text = Paragraph::new("Press '?' for help")
+        .style(Style::default().fg(Color::Gray))
+        .alignment(Alignment::Center);
+      f.render_widget(help_text, header_chunks[0]);
 
       // Title in center
       let title = Paragraph::new("Install NixOS")
         .style(Style::default().add_modifier(Modifier::BOLD))
         .alignment(Alignment::Center);
       f.render_widget(title, header_chunks[1]);
-
-      // Help text on right
-      let help_text = Paragraph::new("Press '?' for help")
-        .style(Style::default().fg(Color::Gray))
-        .alignment(Alignment::Center);
-      f.render_widget(help_text, header_chunks[0]);
 
       // Draw current page in the remaining area
       if let Some(page) = page_stack.last_mut() {

@@ -11,7 +11,7 @@ use crate::{
     DiskItem, PartStatus, Partition, bytes_readable, disk_table, lsblk, parse_sectors, part_table,
   },
   installer::{Installer, Page, Signal},
-  styled_block, ui_back, ui_close, ui_down, ui_enter, ui_up,
+  split_hor, split_vert, styled_block, ui_back, ui_close, ui_down, ui_enter, ui_up,
   widget::{
     Button, CheckBox, ConfigWidget, HelpModal, InfoBox, LineEditor, TableWidget, WidgetBox,
   },
@@ -133,11 +133,10 @@ impl<'a> Default for Drives<'a> {
 
 impl<'a> Page for Drives<'a> {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(2)
-      .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
-      .split(area);
+    let chunks = split_vert!(
+      area, 1,
+      [Constraint::Percentage(70), Constraint::Percentage(30)]
+    );
 
     self.info_box.render(f, chunks[0]);
     self.buttons.render(f, chunks[1]);
@@ -699,18 +698,14 @@ impl Page for SelectFilesystem {
       .direction(Direction::Vertical)
       .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
       .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .margin(2)
-      .constraints(
-        [
-          Constraint::Percentage(40),
-          Constraint::Percentage(20),
-          Constraint::Percentage(40),
-        ]
-        .as_ref(),
-      )
-      .split(vert_chunks[0]);
+    let hor_chunks = split_hor!(
+      vert_chunks[0], 1,
+      [
+        Constraint::Percentage(40),
+        Constraint::Percentage(20),
+        Constraint::Percentage(40),
+      ]
+    );
 
     let idx = self.buttons.selected_child().unwrap_or(9);
     let info_box = Self::get_fs_info(self.buttons.selected_child().unwrap_or(9));
@@ -890,30 +885,22 @@ impl Page for ManualPartition {
     let len = self.disk_config.len();
     let table_constraint = 20 + (5u16 * len as u16);
     let padding = 70u16.saturating_sub(table_constraint);
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(2)
-      .constraints(
-        [
-          Constraint::Percentage(table_constraint),
-          Constraint::Percentage(30),
-          Constraint::Percentage(padding),
-        ]
-        .as_ref(),
-      )
-      .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .margin(2)
-      .constraints(
-        [
-          Constraint::Percentage(33),
-          Constraint::Percentage(33),
-          Constraint::Percentage(33),
-        ]
-        .as_ref(),
-      )
-      .split(chunks[1]);
+    let chunks = split_vert!(
+      area, 1,
+      [
+        Constraint::Percentage(table_constraint),
+        Constraint::Percentage(30),
+        Constraint::Percentage(padding),
+      ]
+    );
+    let hor_chunks = split_hor!(
+      chunks[1], 1,
+      [
+        Constraint::Percentage(33),
+        Constraint::Percentage(33),
+        Constraint::Percentage(33),
+      ]
+    );
 
     self.disk_config.render(f, chunks[0]);
     self.buttons.render(f, hor_chunks[1]);
@@ -1172,11 +1159,10 @@ impl Default for SuggestPartition {
 
 impl Page for SuggestPartition {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(2)
-      .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
-      .split(area);
+    let chunks = split_vert!(
+      area, 1,
+      [Constraint::Percentage(70), Constraint::Percentage(30)]
+    );
 
     let info_box = InfoBox::new(
       "Suggest Partition Layout",
@@ -1357,28 +1343,22 @@ impl NewPartition {
     self.total_size * self.sector_size
   }
   pub fn render_size_input(&mut self, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .constraints(
-        [
-          Constraint::Percentage(40),
-          Constraint::Length(5),
-          Constraint::Percentage(40),
-        ]
-        .as_ref(),
-      )
-      .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .constraints(
-        [
-          Constraint::Percentage(33),
-          Constraint::Percentage(34),
-          Constraint::Percentage(33),
-        ]
-        .as_ref(),
-      )
-      .split(chunks[1]);
+    let chunks = split_vert!(
+      area, 1,
+      [
+        Constraint::Percentage(40),
+        Constraint::Length(7),
+        Constraint::Percentage(40),
+      ]
+    );
+    let hor_chunks = split_hor!(
+      chunks[1], 1,
+      [
+        Constraint::Percentage(33),
+        Constraint::Percentage(34),
+        Constraint::Percentage(33),
+      ]
+    );
 
     let info_box = InfoBox::new(
       "Free Space Info",
@@ -1448,22 +1428,18 @@ impl NewPartition {
     }
   }
   pub fn render_fs_select(&mut self, f: &mut Frame, area: Rect) {
-    let vert_chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-      .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .margin(2)
-      .constraints(
-        [
-          Constraint::Percentage(40),
-          Constraint::Percentage(20),
-          Constraint::Percentage(40),
-        ]
-        .as_ref(),
-      )
-      .split(vert_chunks[0]);
+    let vert_chunks = split_vert!(
+      area, 1,
+      [Constraint::Percentage(50), Constraint::Percentage(50)]
+    );
+    let hor_chunks = split_hor!(
+      vert_chunks[0], 1,
+      [
+        Constraint::Percentage(40),
+        Constraint::Percentage(20),
+        Constraint::Percentage(40),
+      ]
+    );
 
     let idx = self.fs_buttons.selected_child().unwrap_or(9);
     let info_box = SelectFilesystem::get_fs_info(self.fs_buttons.selected_child().unwrap_or(9));
@@ -1516,28 +1492,22 @@ impl NewPartition {
     }
   }
   pub fn render_mount_point_input(&mut self, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .constraints(
-        [
-          Constraint::Percentage(70),
-          Constraint::Length(5),
-          Constraint::Percentage(25),
-        ]
-        .as_ref(),
-      )
-      .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .constraints(
-        [
-          Constraint::Percentage(33),
-          Constraint::Percentage(34),
-          Constraint::Percentage(33),
-        ]
-        .as_ref(),
-      )
-      .split(chunks[1]);
+    let chunks = split_vert!(
+      area, 1,
+      [
+        Constraint::Percentage(70),
+        Constraint::Length(7),
+        Constraint::Percentage(25),
+      ]
+    );
+    let hor_chunks = split_hor!(
+      chunks[1], 1,
+      [
+        Constraint::Percentage(33),
+        Constraint::Percentage(34),
+        Constraint::Percentage(33),
+      ]
+    );
 
     let info_box = InfoBox::new(
       "Mount Point Info",
@@ -1738,11 +1708,10 @@ impl AlterPartition {
     }
   }
   pub fn render_existing_part(&self, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(2)
-      .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
-      .split(area);
+    let chunks = split_vert!(
+      area, 1,
+      [Constraint::Percentage(70), Constraint::Percentage(30)]
+    );
 
     let info_box = InfoBox::new(
       "Alter Existing Partition",
@@ -1789,11 +1758,10 @@ impl AlterPartition {
     self.buttons.render(f, chunks[1]);
   }
   pub fn render_modify_part(&self, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(2)
-      .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
-      .split(area);
+    let chunks = split_vert!(
+      area, 1,
+      [Constraint::Percentage(70), Constraint::Percentage(30)]
+    );
 
     let info_box = InfoBox::new(
       "Alter Partition (Marked for Modification)",
@@ -1826,11 +1794,10 @@ impl AlterPartition {
     self.buttons.render(f, chunks[1]);
   }
   pub fn render_delete_part(&self, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(2)
-      .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
-      .split(area);
+    let chunks = split_vert!(
+      area, 1,
+      [Constraint::Percentage(70), Constraint::Percentage(30)]
+    );
 
     let info_box = InfoBox::new(
       "Deleted Partition",
@@ -2144,23 +2111,20 @@ impl Page for SetMountPoint {
       .constraints(
         [
           Constraint::Percentage(40),
-          Constraint::Length(5),
+          Constraint::Length(7),
           Constraint::Percentage(40),
         ]
         .as_ref(),
       )
       .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .constraints(
-        [
-          Constraint::Percentage(15),
-          Constraint::Percentage(70),
-          Constraint::Percentage(15),
-        ]
-        .as_ref(),
-      )
-      .split(chunks[1]);
+    let hor_chunks = split_hor!(
+      chunks[1], 1,
+      [
+        Constraint::Percentage(15),
+        Constraint::Percentage(70),
+        Constraint::Percentage(15),
+      ]
+    );
 
     let info_box = InfoBox::new(
       "Set Mount Point",
@@ -2236,28 +2200,22 @@ impl SetLabel {
 
 impl Page for SetLabel {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .constraints(
-        [
-          Constraint::Percentage(40),
-          Constraint::Length(5),
-          Constraint::Percentage(40),
-        ]
-        .as_ref(),
-      )
-      .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .constraints(
-        [
-          Constraint::Percentage(15),
-          Constraint::Percentage(70),
-          Constraint::Percentage(15),
-        ]
-        .as_ref(),
-      )
-      .split(chunks[1]);
+    let chunks = split_vert!(
+      area, 1,
+      [
+        Constraint::Percentage(40),
+        Constraint::Length(7),
+        Constraint::Percentage(40),
+      ]
+    );
+    let hor_chunks = split_hor!(
+      chunks[1], 1,
+      [
+        Constraint::Percentage(15),
+        Constraint::Percentage(70),
+        Constraint::Percentage(15),
+      ]
+    );
 
     let info_box = InfoBox::new(
       "Set Partition Label",

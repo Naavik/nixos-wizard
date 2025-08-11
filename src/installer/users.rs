@@ -1,12 +1,12 @@
 use ratatui::{
   crossterm::event::KeyCode,
-  layout::{Constraint, Direction, Layout},
+  layout::Constraint,
   text::Line,
 };
 
 use crate::{
   installer::{HIGHLIGHT, Installer, Page, Signal, systempkgs::get_available_pkgs},
-  styled_block, ui_back, ui_close, ui_down, ui_enter, ui_up,
+  split_hor, split_vert, styled_block, ui_back, ui_close, ui_down, ui_enter, ui_up,
   widget::{
     Button, ConfigWidget, HelpModal, InfoBox, LineEditor, PackagePicker, StrList, TableWidget,
     WidgetBox,
@@ -167,17 +167,13 @@ impl Page for UserAccounts {
     f: &mut ratatui::Frame,
     area: ratatui::prelude::Rect,
   ) {
-    let chunks = ratatui::layout::Layout::default()
-      .direction(ratatui::layout::Direction::Vertical)
-      .margin(1)
-      .constraints(
-        [
-          ratatui::layout::Constraint::Percentage(60),
-          ratatui::layout::Constraint::Percentage(40),
-        ]
-        .as_ref(),
-      )
-      .split(area);
+    let chunks = split_vert!(
+      area, 1,
+      [
+        Constraint::Percentage(60),
+        Constraint::Percentage(40),
+      ]
+    );
     let mut rows: Vec<Vec<String>> = installer
       .users
       .clone()
@@ -494,31 +490,23 @@ impl Page for AddUser {
     f: &mut ratatui::Frame,
     area: ratatui::prelude::Rect,
   ) {
-    let hor_chunks = ratatui::layout::Layout::default()
-      .direction(ratatui::layout::Direction::Horizontal)
-      .margin(2)
-      .constraints(
-        [
-          ratatui::layout::Constraint::Percentage(25),
-          ratatui::layout::Constraint::Percentage(50),
-          ratatui::layout::Constraint::Percentage(25),
-        ]
-        .as_ref(),
-      )
-      .split(area);
-    let chunks = ratatui::layout::Layout::default()
-      .direction(ratatui::layout::Direction::Vertical)
-      .margin(1)
-      .constraints(
-        [
-          ratatui::layout::Constraint::Length(3),
-          ratatui::layout::Constraint::Length(3),
-          ratatui::layout::Constraint::Length(3),
-          ratatui::layout::Constraint::Min(0),
-        ]
-        .as_ref(),
-      )
-      .split(hor_chunks[1]);
+    let hor_chunks = split_hor!(
+      area, 1,
+      [
+        Constraint::Percentage(25),
+        Constraint::Percentage(50),
+        Constraint::Percentage(25),
+      ]
+    );
+    let chunks = split_vert!(
+      hor_chunks[1], 1,
+      [
+        Constraint::Length(3),
+        Constraint::Length(3),
+        Constraint::Length(3),
+        Constraint::Min(0),
+      ]
+    );
     self.name_input.render(f, chunks[0]);
     self.pass_input.render(f, chunks[1]);
     self.pass_confirm.render(f, chunks[2]);
@@ -753,6 +741,7 @@ pub struct AlterUser {
   pub group_name_input: LineEditor,
   pub group_list: StrList,
   help_modal: HelpModal<'static>,
+  confirming_delete: bool,
 }
 
 impl AlterUser {
@@ -834,84 +823,61 @@ impl AlterUser {
       group_name_input: LineEditor::new("Add group", None::<&str>),
       group_list: StrList::new("Groups", groups),
       help_modal,
+      confirming_delete: false,
     }
   }
   pub fn render_main_menu(&mut self, f: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
-    let vert_chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-      .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .margin(2)
-      .constraints(
-        [
-          Constraint::Percentage(40),
-          Constraint::Percentage(20),
-          Constraint::Percentage(40),
-        ]
-        .as_ref(),
-      )
-      .split(vert_chunks[0]);
+    let vert_chunks = split_vert!(
+      area, 1,
+      [Constraint::Percentage(50), Constraint::Percentage(50)]
+    );
+    let hor_chunks = split_hor!(
+      vert_chunks[0], 1,
+      [
+        Constraint::Percentage(40),
+        Constraint::Percentage(20),
+        Constraint::Percentage(40),
+      ]
+    );
     self.buttons.render(f, hor_chunks[1]);
   }
   pub fn render_name_change(&mut self, f: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(2)
-      .constraints([Constraint::Length(5), Constraint::Min(0)].as_ref())
-      .split(area);
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .margin(2)
-      .constraints(
-        [
-          Constraint::Percentage(25),
-          Constraint::Percentage(50),
-          Constraint::Percentage(25),
-        ]
-        .as_ref(),
-      )
-      .split(chunks[0]);
+    let chunks = split_vert!(area, 1, [Constraint::Length(5), Constraint::Min(0)]);
+    let hor_chunks = split_hor!(
+      chunks[0], 1,
+      [
+        Constraint::Percentage(25),
+        Constraint::Percentage(50),
+        Constraint::Percentage(25),
+      ]
+    );
     self.name_input.render(f, hor_chunks[1]);
   }
   pub fn render_pass_change(&mut self, f: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .margin(2)
-      .constraints(
-        [
-          Constraint::Length(7),
-          Constraint::Length(7),
-          Constraint::Min(0),
-        ]
-        .as_ref(),
-      )
-      .split(area);
-    let hor_chunks1 = Layout::default()
-      .direction(Direction::Horizontal)
-      .margin(2)
-      .constraints(
-        [
-          Constraint::Percentage(25),
-          Constraint::Percentage(50),
-          Constraint::Percentage(25),
-        ]
-        .as_ref(),
-      )
-      .split(chunks[0]);
-    let hor_chunks2 = Layout::default()
-      .direction(Direction::Horizontal)
-      .margin(2)
-      .constraints(
-        [
-          Constraint::Percentage(25),
-          Constraint::Percentage(50),
-          Constraint::Percentage(25),
-        ]
-        .as_ref(),
-      )
-      .split(chunks[1]);
+    let chunks = split_vert!(
+      area, 1,
+      [
+        Constraint::Length(7),
+        Constraint::Length(7),
+        Constraint::Min(0),
+      ]
+    );
+    let hor_chunks1 = split_hor!(
+      chunks[0], 1,
+      [
+        Constraint::Percentage(25),
+        Constraint::Percentage(50),
+        Constraint::Percentage(25),
+      ]
+    );
+    let hor_chunks2 = split_hor!(
+      chunks[1], 1,
+      [
+        Constraint::Percentage(25),
+        Constraint::Percentage(50),
+        Constraint::Percentage(25),
+      ]
+    );
     self.pass_input.render(f, hor_chunks1[1]);
     self.pass_confirm.render(f, hor_chunks2[1]);
   }
@@ -921,22 +887,18 @@ impl AlterUser {
     f: &mut ratatui::Frame,
     area: ratatui::prelude::Rect,
   ) {
-    let hor_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .margin(2)
-      .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-      .split(area);
-    let line_editor_chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .constraints(
-        [
-          Constraint::Length(5),
-          Constraint::Percentage(80),
-          Constraint::Min(7),
-        ]
-        .as_ref(),
-      )
-      .split(hor_chunks[0]);
+    let hor_chunks = split_hor!(
+      area, 1,
+      [Constraint::Percentage(50), Constraint::Percentage(50)]
+    );
+    let line_editor_chunks = split_vert!(
+      hor_chunks[0], 1,
+      [
+        Constraint::Length(5),
+        Constraint::Percentage(80),
+        Constraint::Min(7),
+      ]
+    );
     let help_box = InfoBox::new(
       "Help",
       styled_block(vec![
@@ -968,6 +930,17 @@ impl AlterUser {
     installer: &mut super::Installer,
     event: ratatui::crossterm::event::KeyEvent,
   ) -> Signal {
+    if self.confirming_delete && event.code != KeyCode::Enter {
+      self.confirming_delete = false;
+      let buttons = vec![
+        Box::new(Button::new("Change username")) as Box<dyn ConfigWidget>,
+        Box::new(Button::new("Change password")) as Box<dyn ConfigWidget>,
+        Box::new(Button::new("Edit Groups")) as Box<dyn ConfigWidget>,
+        Box::new(Button::new("Configure Home Manager")) as Box<dyn ConfigWidget>,
+        Box::new(Button::new("Delete user")) as Box<dyn ConfigWidget>,
+      ];
+      self.buttons.set_children_inplace(buttons);
+    }
     match event.code {
       ui_down!() => {
         if !self.buttons.next_child() {
@@ -1013,10 +986,23 @@ impl AlterUser {
           }
           Some(4) => {
             // Delete user
-            if self.selected_user < installer.users.len() {
-              installer.users.remove(self.selected_user);
+            if !self.confirming_delete {
+              self.confirming_delete = true;
+              let buttons = vec![
+                Box::new(Button::new("Change username")) as Box<dyn ConfigWidget>,
+                Box::new(Button::new("Change password")) as Box<dyn ConfigWidget>,
+                Box::new(Button::new("Edit Groups")) as Box<dyn ConfigWidget>,
+                Box::new(Button::new("Configure Home Manager")) as Box<dyn ConfigWidget>,
+                Box::new(Button::new("Really?")) as Box<dyn ConfigWidget>,
+              ];
+              self.buttons.set_children_inplace(buttons);
+              Signal::Wait
+            } else {
+              if self.selected_user < installer.users.len() {
+                installer.users.remove(self.selected_user);
+              }
+              Signal::Pop
             }
-            Signal::Pop
           }
           _ => Signal::Wait,
         }
@@ -1385,6 +1371,7 @@ pub struct ConfigureHomeManager {
   pub configuration_options: WidgetBox,
   pub package_picker: PackagePicker,
   pub selected_user: usize,
+  pub confirming_disable: bool,
 }
 
 impl ConfigureHomeManager {
@@ -1417,6 +1404,7 @@ impl ConfigureHomeManager {
         configuration_options,
         package_picker,
         selected_user,
+        confirming_disable: false,
       }
     } else {
       confirm_buttons.focus();
@@ -1430,6 +1418,7 @@ impl ConfigureHomeManager {
         configuration_options,
         package_picker,
         selected_user,
+        confirming_disable: false,
       }
     }
   }
@@ -1465,22 +1454,18 @@ impl Page for ConfigureHomeManager {
           ],
         ]),
       );
-      let vert_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
-        .split(area);
-      let hor_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .margin(2)
-        .constraints(
-          [
-            Constraint::Percentage(40),
-            Constraint::Percentage(20),
-            Constraint::Percentage(40),
-          ]
-          .as_ref(),
-        )
-        .split(vert_chunks[1]);
+      let vert_chunks = split_vert!(
+        area, 1,
+        [Constraint::Percentage(70), Constraint::Percentage(30)]
+      );
+      let hor_chunks = split_hor!(
+        vert_chunks[1], 1,
+        [
+          Constraint::Percentage(40),
+          Constraint::Percentage(20),
+          Constraint::Percentage(40),
+        ]
+      );
 
       info_box.render(f, vert_chunks[0]);
       self.confirm_buttons.render(f, hor_chunks[1]);
@@ -1503,22 +1488,18 @@ impl Page for ConfigureHomeManager {
           pkgs,
         )
       });
-      let vert_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-        .split(area);
-      let hor_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .margin(2)
-        .constraints(
-          [
-            Constraint::Percentage(40),
-            Constraint::Percentage(20),
-            Constraint::Percentage(40),
-          ]
-          .as_ref(),
-        )
-        .split(vert_chunks[0]);
+      let vert_chunks = split_vert!(
+        area, 1,
+        [Constraint::Percentage(50), Constraint::Percentage(50)]
+      );
+      let hor_chunks = split_hor!(
+        vert_chunks[0], 1,
+        [
+          Constraint::Percentage(40),
+          Constraint::Percentage(20),
+          Constraint::Percentage(40),
+        ]
+      );
       self.configuration_options.render(f, hor_chunks[1]);
       table.unwrap().render(f, vert_chunks[1]);
     }
@@ -1589,6 +1570,14 @@ impl Page for ConfigureHomeManager {
         _ => self.package_picker.handle_input(event),
       }
     } else {
+      if self.confirming_disable && event.code != KeyCode::Enter {
+        self.confirming_disable = false;
+        let config_options = vec![
+          Box::new(Button::new("Configure User Packages")) as Box<dyn ConfigWidget>,
+          Box::new(Button::new("Disable Home Manager")) as Box<dyn ConfigWidget>,
+        ];
+        self.configuration_options.set_children_inplace(config_options);
+      }
       match event.code {
         ui_down!() => {
           if !self.configuration_options.next_child() {
@@ -1612,10 +1601,20 @@ impl Page for ConfigureHomeManager {
             }
             Some(1) => {
               // Disable Home Manager
-              if self.selected_user < installer.users.len() {
-                installer.users[self.selected_user].home_manager_cfg = None;
+              if !self.confirming_disable {
+                self.confirming_disable = true;
+                let config_options = vec![
+                  Box::new(Button::new("Configure User Packages")) as Box<dyn ConfigWidget>,
+                  Box::new(Button::new("Really?")) as Box<dyn ConfigWidget>,
+                ];
+                self.configuration_options.set_children_inplace(config_options);
+                Signal::Wait
+              } else {
+                if self.selected_user < installer.users.len() {
+                  installer.users[self.selected_user].home_manager_cfg = None;
+                }
+                Signal::Pop
               }
-              Signal::Pop
             }
             _ => Signal::Wait,
           }
