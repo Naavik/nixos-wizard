@@ -21,8 +21,8 @@ The program itself has three core components:
 
 ### The event loop
 The event loop contains a stack of `Box<dyn Page>`, and whenever a page is entered, that page is pushed onto the stack. Whenever a page is exited, that page is popped from the stack. Every iteration of the event loop does two things:
-	* Calls the `render()` method of the page on top of the stack
-	* Polls for user input, and if any is received, passes that input to the `handle_input()` method of the page on top of the stack.
+* Calls the `render()` method of the page on top of the stack
+* Polls for user input, and if any is received, passes that input to the `handle_input()` method of the page on top of the stack.
 The pages communicate with the event loop using the `Signal` enum. `Signal::Pop` makes the event loop pop from the page stack, for instance.
 
 ### The `Page` trait
