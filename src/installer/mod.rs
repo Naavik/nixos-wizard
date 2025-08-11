@@ -1671,6 +1671,71 @@ impl Bootloader {
       help_modal,
     }
   }
+  pub fn get_bootloader_info<'a>(idx: usize) -> InfoBox<'a> {
+    match idx {
+      0 => InfoBox::new(
+        "GRUB",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "GRUB"),
+            (None, " (GRand Unified Bootloader) is a "),
+            (HIGHLIGHT, "traditional and widely-used bootloader"),
+            (None, " that supports "),
+            (HIGHLIGHT, "both BIOS and UEFI systems"),
+            (None, "."),
+          ],
+          vec![
+            (None, "It offers "),
+            (HIGHLIGHT, "extensive configuration options"),
+            (None, " and supports "),
+            (HIGHLIGHT, "multiple operating systems"),
+            (None, ", making it ideal for dual-boot setups."),
+          ],
+          vec![
+            (None, "GRUB provides a "),
+            (HIGHLIGHT, "menu interface"),
+            (None, " at boot time and supports "),
+            (HIGHLIGHT, "advanced features"),
+            (None, " like custom themes and boot parameters."),
+          ],
+        ]),
+      ),
+      1 => InfoBox::new(
+        "systemd-boot",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "systemd-boot"),
+            (None, " is a "),
+            (HIGHLIGHT, "lightweight and simple bootloader"),
+            (None, " that is part of the systemd project."),
+          ],
+          vec![
+            (None, "It only supports "),
+            (HIGHLIGHT, "UEFI systems"),
+            (None, " and provides a "),
+            (HIGHLIGHT, "minimalist approach"),
+            (None, " to booting with "),
+            (HIGHLIGHT, "faster boot times"),
+            (None, "."),
+          ],
+          vec![
+            (None, "systemd-boot is "),
+            (HIGHLIGHT, "easier to configure"),
+            (None, " than GRUB but has "),
+            (HIGHLIGHT, "fewer features"),
+            (None, " and is best suited for single-OS installations."),
+          ],
+        ]),
+      ),
+      _ => InfoBox::new(
+        "Unknown Bootloader",
+        styled_block(vec![vec![(
+          None,
+          "No information available for this bootloader.",
+        )]]),
+      ),
+    }
+  }
   pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
     installer.bootloader.clone().map(|s| {
       let ib = InfoBox::new(
@@ -1708,8 +1773,25 @@ impl Default for Bootloader {
 
 impl Page for Bootloader {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = split_vert!(area, 1, [Constraint::Percentage(100)]);
-    self.loaders.render(f, chunks[0]);
+    let vert_chunks = Layout::default()
+      .direction(Direction::Vertical)
+      .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+      .split(area);
+    let hor_chunks = split_hor!(
+      vert_chunks[0],
+      1,
+      [
+        Constraint::Percentage(40),
+        Constraint::Percentage(20),
+        Constraint::Percentage(40),
+      ]
+    );
+
+    let idx = self.loaders.selected_idx;
+    let info_box = Self::get_bootloader_info(idx);
+    self.loaders.render(f, hor_chunks[1]);
+    info_box.render(f, vert_chunks[1]);
+
     self.help_modal.render(f, area);
   }
 
@@ -2593,7 +2675,7 @@ pub struct Greeter {
 
 impl Greeter {
   pub fn new() -> Self {
-    let greeters = ["LightDM", "GDM", "SDDM", "None (auto-login)"]
+    let greeters = ["LightDM", "GDM", "SDDM", "None"]
       .iter()
       .map(|s| s.to_string())
       .collect::<Vec<_>>();
@@ -2735,7 +2817,7 @@ impl DesktopEnvironment {
       "lxqt",
       "Budgie",
       "i3",
-      "None (command line only)",
+      "None",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -2769,6 +2851,302 @@ impl DesktopEnvironment {
     Self {
       desktops,
       help_modal,
+    }
+  }
+  pub fn get_desktop_info<'a>(idx: usize) -> InfoBox<'a> {
+    match idx {
+      0 => InfoBox::new(
+        "GNOME",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "GNOME"),
+            (None, " is a "),
+            (HIGHLIGHT, "modern and popular desktop environment"),
+            (None, " that provides a "),
+            (HIGHLIGHT, "user-friendly experience"),
+            (None, " with a focus on "),
+            (HIGHLIGHT, "simplicity and elegance"),
+            (None, "."),
+          ],
+          vec![
+            (None, "It features a "),
+            (HIGHLIGHT, "clean interface"),
+            (None, " with "),
+            (HIGHLIGHT, "activities overview"),
+            (None, ", "),
+            (HIGHLIGHT, "workspaces"),
+            (None, ", and extensive "),
+            (HIGHLIGHT, "customization options"),
+            (None, " through extensions."),
+          ],
+          vec![
+            (None, "GNOME is "),
+            (HIGHLIGHT, "resource-intensive"),
+            (None, " but offers "),
+            (HIGHLIGHT, "excellent accessibility"),
+            (None, " and "),
+            (HIGHLIGHT, "touch support"),
+            (None, "."),
+          ],
+        ]),
+      ),
+      1 => InfoBox::new(
+        "KDE Plasma",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "KDE Plasma"),
+            (None, " is a "),
+            (HIGHLIGHT, "highly customizable desktop environment"),
+            (None, " that offers "),
+            (HIGHLIGHT, "extensive configuration options"),
+            (None, " and a "),
+            (HIGHLIGHT, "traditional desktop experience"),
+            (None, "."),
+          ],
+          vec![
+            (None, "It provides "),
+            (HIGHLIGHT, "powerful widgets"),
+            (None, ", "),
+            (HIGHLIGHT, "multiple panel layouts"),
+            (None, ", and "),
+            (HIGHLIGHT, "advanced system settings"),
+            (None, " with a familiar Windows-like interface."),
+          ],
+          vec![
+            (None, "KDE Plasma is "),
+            (HIGHLIGHT, "feature-rich"),
+            (None, " and "),
+            (HIGHLIGHT, "resource-efficient"),
+            (None, ", making it suitable for both power users and beginners."),
+          ],
+        ]),
+      ),
+      2 => InfoBox::new(
+        "Hyprland",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "Hyprland"),
+            (None, " is a "),
+            (HIGHLIGHT, "dynamic tiling Wayland compositor"),
+            (None, " that focuses on "),
+            (HIGHLIGHT, "eye candy and customization"),
+            (None, "."),
+          ],
+          vec![
+            (None, "It features "),
+            (HIGHLIGHT, "beautiful animations"),
+            (None, ", "),
+            (HIGHLIGHT, "automatic window tiling"),
+            (None, ", and "),
+            (HIGHLIGHT, "extensive configuration"),
+            (None, " through text files."),
+          ],
+          vec![
+            (None, "Hyprland is "),
+            (HIGHLIGHT, "highly efficient"),
+            (None, " and perfect for users who prefer "),
+            (HIGHLIGHT, "keyboard-driven workflows"),
+            (None, " and "),
+            (HIGHLIGHT, "minimal resource usage"),
+            (None, "."),
+          ],
+        ]),
+      ),
+      3 => InfoBox::new(
+        "XFCE",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "XFCE"),
+            (None, " is a "),
+            (HIGHLIGHT, "lightweight and fast desktop environment"),
+            (None, " that aims to be "),
+            (HIGHLIGHT, "visually appealing and user-friendly"),
+            (None, " while being "),
+            (HIGHLIGHT, "resource-efficient"),
+            (None, "."),
+          ],
+          vec![
+            (None, "It provides a "),
+            (HIGHLIGHT, "traditional desktop experience"),
+            (None, " with "),
+            (HIGHLIGHT, "customizable panels"),
+            (None, ", "),
+            (HIGHLIGHT, "file manager"),
+            (None, ", and "),
+            (HIGHLIGHT, "application menu"),
+            (None, "."),
+          ],
+          vec![
+            (None, "XFCE is "),
+            (HIGHLIGHT, "perfect for older hardware"),
+            (None, " or users who want a "),
+            (HIGHLIGHT, "simple, stable"),
+            (None, " desktop without sacrificing functionality."),
+          ],
+        ]),
+      ),
+      4 => InfoBox::new(
+        "Cinnamon",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "Cinnamon"),
+            (None, " is a "),
+            (HIGHLIGHT, "modern desktop environment"),
+            (None, " that provides a "),
+            (HIGHLIGHT, "familiar and intuitive experience"),
+            (None, " similar to traditional desktops."),
+          ],
+          vec![
+            (None, "It features a "),
+            (HIGHLIGHT, "taskbar-style panel"),
+            (None, ", "),
+            (HIGHLIGHT, "system tray"),
+            (None, ", and "),
+            (HIGHLIGHT, "start menu"),
+            (None, " with "),
+            (HIGHLIGHT, "smooth animations"),
+            (None, " and effects."),
+          ],
+          vec![
+            (None, "Cinnamon balances "),
+            (HIGHLIGHT, "modern features"),
+            (None, " with "),
+            (HIGHLIGHT, "traditional usability"),
+            (None, ", making it great for users transitioning from other operating systems."),
+          ],
+        ]),
+      ),
+      5 => InfoBox::new(
+        "MATE",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "MATE"),
+            (None, " is a "),
+            (HIGHLIGHT, "traditional desktop environment"),
+            (None, " that continues the legacy of "),
+            (HIGHLIGHT, "GNOME 2"),
+            (None, " with a "),
+            (HIGHLIGHT, "classic interface"),
+            (None, "."),
+          ],
+          vec![
+            (None, "It provides "),
+            (HIGHLIGHT, "stability"),
+            (None, ", "),
+            (HIGHLIGHT, "reliability"),
+            (None, ", and "),
+            (HIGHLIGHT, "low resource usage"),
+            (None, " while maintaining "),
+            (HIGHLIGHT, "familiar desktop metaphors"),
+            (None, "."),
+          ],
+          vec![
+            (None, "MATE is "),
+            (HIGHLIGHT, "ideal for users"),
+            (None, " who prefer "),
+            (HIGHLIGHT, "conventional desktop layouts"),
+            (None, " and "),
+            (HIGHLIGHT, "proven workflows"),
+            (None, "."),
+          ],
+        ]),
+      ),
+      6 => InfoBox::new(
+        "LXQt",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "LXQt"),
+            (None, " is a "),
+            (HIGHLIGHT, "lightweight Qt-based desktop environment"),
+            (None, " that focuses on "),
+            (HIGHLIGHT, "efficiency and performance"),
+            (None, "."),
+          ],
+          vec![
+            (None, "It provides a "),
+            (HIGHLIGHT, "simple and clean interface"),
+            (None, " with "),
+            (HIGHLIGHT, "low memory footprint"),
+            (None, " and "),
+            (HIGHLIGHT, "fast startup times"),
+            (None, "."),
+          ],
+          vec![
+            (None, "LXQt is "),
+            (HIGHLIGHT, "perfect for older computers"),
+            (None, " or users who want "),
+            (HIGHLIGHT, "minimal resource consumption"),
+            (None, " without sacrificing modern features."),
+          ],
+        ]),
+      ),
+      7 => InfoBox::new(
+        "Budgie",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "Budgie"),
+            (None, " is a "),
+            (HIGHLIGHT, "elegant and modern desktop environment"),
+            (None, " that emphasizes "),
+            (HIGHLIGHT, "simplicity and user experience"),
+            (None, "."),
+          ],
+          vec![
+            (None, "It features a "),
+            (HIGHLIGHT, "clean sidebar panel"),
+            (None, ", "),
+            (HIGHLIGHT, "notification system"),
+            (None, ", and "),
+            (HIGHLIGHT, "built-in applets"),
+            (None, " with a focus on productivity."),
+          ],
+          vec![
+            (None, "Budgie offers a "),
+            (HIGHLIGHT, "balance between simplicity and functionality"),
+            (None, ", making it suitable for users who want a "),
+            (HIGHLIGHT, "modern desktop"),
+            (None, " without complexity."),
+          ],
+        ]),
+      ),
+      8 => InfoBox::new(
+        "i3",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "i3"),
+            (None, " is a "),
+            (HIGHLIGHT, "tiling window manager"),
+            (None, " designed for "),
+            (HIGHLIGHT, "power users and developers"),
+            (None, " who prefer "),
+            (HIGHLIGHT, "keyboard-driven workflows"),
+            (None, "."),
+          ],
+          vec![
+            (None, "It automatically "),
+            (HIGHLIGHT, "tiles windows"),
+            (None, " to make "),
+            (HIGHLIGHT, "efficient use of screen space"),
+            (None, " and provides "),
+            (HIGHLIGHT, "extensive customization"),
+            (None, " through configuration files."),
+          ],
+          vec![
+            (None, "i3 has "),
+            (HIGHLIGHT, "minimal resource usage"),
+            (None, " and offers "),
+            (HIGHLIGHT, "maximum productivity"),
+            (None, " for users comfortable with command-line interfaces."),
+          ],
+        ]),
+      ),
+      _ => InfoBox::new(
+        "Unknown Desktop Environment",
+        styled_block(vec![vec![(
+          None,
+          "No information available for this desktop environment.",
+        )]]),
+      ),
     }
   }
   pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
@@ -2812,8 +3190,27 @@ impl Default for DesktopEnvironment {
 
 impl Page for DesktopEnvironment {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = split_vert!(area, 1, [Constraint::Percentage(100)]);
-    self.desktops.render(f, chunks[0]);
+    let vert_chunks = Layout::default()
+      .direction(Direction::Vertical)
+      .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+      .split(area);
+    let hor_chunks = split_hor!(
+      vert_chunks[0],
+      1,
+      [
+        Constraint::Percentage(38),
+        Constraint::Length(28),
+        Constraint::Percentage(38),
+      ]
+    );
+
+    let idx = self.desktops.selected_idx;
+    let info_box = Self::get_desktop_info(idx);
+    self.desktops.render(f, hor_chunks[1]);
+    if idx < 9 {
+      info_box.render(f, vert_chunks[1]);
+    }
+
     self.help_modal.render(f, area);
   }
 
@@ -2890,7 +3287,7 @@ impl Kernels {
       "linux-lts",
       "linux-zen",
       "linux-hardened",
-      "None (custom kernel)",
+      "None",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -3031,7 +3428,7 @@ pub struct Audio {
 
 impl Audio {
   pub fn new() -> Self {
-    let backends = ["PipeWire", "PulseAudio", "None (no audio support)"]
+    let backends = ["PipeWire", "PulseAudio", "None"]
       .iter()
       .map(|s| s.to_string())
       .collect::<Vec<_>>();
@@ -3064,6 +3461,75 @@ impl Audio {
     Self {
       backends,
       help_modal,
+    }
+  }
+  pub fn get_audio_info<'a>(idx: usize) -> InfoBox<'a> {
+    match idx {
+      0 => InfoBox::new(
+        "PipeWire",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "PipeWire"),
+            (None, " is a "),
+            (HIGHLIGHT, "modern, low-latency audio server"),
+            (None, " that serves as a replacement for both "),
+            (HIGHLIGHT, "PulseAudio and JACK"),
+            (None, "."),
+          ],
+          vec![
+            (None, "It provides "),
+            (HIGHLIGHT, "professional audio capabilities"),
+            (None, " with "),
+            (HIGHLIGHT, "minimal latency"),
+            (None, " and supports "),
+            (HIGHLIGHT, "advanced audio routing"),
+            (None, " and "),
+            (HIGHLIGHT, "real-time processing"),
+            (None, "."),
+          ],
+          vec![
+            (None, "PipeWire offers "),
+            (HIGHLIGHT, "excellent compatibility"),
+            (None, " with existing applications and is the "),
+            (HIGHLIGHT, "recommended choice"),
+            (None, " for modern Linux systems."),
+          ],
+        ]),
+      ),
+      1 => InfoBox::new(
+        "PulseAudio",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "PulseAudio"),
+            (None, " is a "),
+            (HIGHLIGHT, "mature and stable audio server"),
+            (None, " that has been the standard audio system on Linux for many years."),
+          ],
+          vec![
+            (None, "It provides "),
+            (HIGHLIGHT, "network audio streaming"),
+            (None, ", "),
+            (HIGHLIGHT, "device management"),
+            (None, ", and "),
+            (HIGHLIGHT, "per-application volume control"),
+            (None, " with good application compatibility."),
+          ],
+          vec![
+            (None, "PulseAudio is "),
+            (HIGHLIGHT, "well-tested and reliable"),
+            (None, " but may have "),
+            (HIGHLIGHT, "higher latency"),
+            (None, " compared to newer solutions like PipeWire."),
+          ],
+        ]),
+      ),
+      _ => InfoBox::new(
+        "Unknown Audio Backend",
+        styled_block(vec![vec![(
+          None,
+          "No information available for this audio backend.",
+        )]]),
+      ),
     }
   }
   pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
@@ -3107,8 +3573,27 @@ impl Default for Audio {
 
 impl Page for Audio {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = split_vert!(area, 1, [Constraint::Percentage(100)]);
-    self.backends.render(f, chunks[0]);
+    let vert_chunks = Layout::default()
+      .direction(Direction::Vertical)
+      .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+      .split(area);
+    let hor_chunks = split_hor!(
+      vert_chunks[0],
+      1,
+      [
+        Constraint::Percentage(40),
+        Constraint::Percentage(20),
+        Constraint::Percentage(40),
+      ]
+    );
+
+    let idx = self.backends.selected_idx;
+    let info_box = Self::get_audio_info(idx);
+    self.backends.render(f, hor_chunks[1]);
+    if idx < 2 {
+      info_box.render(f, vert_chunks[1]);
+    }
+
     self.help_modal.render(f, area);
   }
 
@@ -3183,7 +3668,7 @@ impl Network {
       "NetworkManager",
       "wpa_supplicant",
       "systemd-networkd",
-      "None (manual setup)",
+      "None",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -3217,6 +3702,102 @@ impl Network {
     Self {
       backends,
       help_modal,
+    }
+  }
+  pub fn get_network_info<'a>(idx: usize) -> InfoBox<'a> {
+    match idx {
+      0 => InfoBox::new(
+        "NetworkManager",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "NetworkManager"),
+            (None, " is a "),
+            (HIGHLIGHT, "comprehensive network management daemon"),
+            (None, " that provides "),
+            (HIGHLIGHT, "automatic network configuration"),
+            (None, " and "),
+            (HIGHLIGHT, "seamless connectivity management"),
+            (None, "."),
+          ],
+          vec![
+            (None, "It supports "),
+            (HIGHLIGHT, "WiFi, Ethernet, VPN, and mobile broadband"),
+            (None, " connections with "),
+            (HIGHLIGHT, "automatic switching"),
+            (None, " between available networks."),
+          ],
+          vec![
+            (None, "NetworkManager provides "),
+            (HIGHLIGHT, "GUI integration"),
+            (None, " and is the "),
+            (HIGHLIGHT, "most user-friendly option"),
+            (None, " for desktop environments."),
+          ],
+        ]),
+      ),
+      1 => InfoBox::new(
+        "wpa_supplicant",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "wpa_supplicant"),
+            (None, " is a "),
+            (HIGHLIGHT, "lightweight WiFi authentication client"),
+            (None, " that handles "),
+            (HIGHLIGHT, "WPA/WPA2 and WPA3 security protocols"),
+            (None, "."),
+          ],
+          vec![
+            (None, "It provides "),
+            (HIGHLIGHT, "minimal overhead"),
+            (None, " and "),
+            (HIGHLIGHT, "direct control"),
+            (None, " over wireless connections but requires "),
+            (HIGHLIGHT, "manual configuration"),
+            (None, " for most setups."),
+          ],
+          vec![
+            (None, "wpa_supplicant is "),
+            (HIGHLIGHT, "ideal for servers"),
+            (None, " or users who prefer "),
+            (HIGHLIGHT, "command-line network management"),
+            (None, " with minimal dependencies."),
+          ],
+        ]),
+      ),
+      2 => InfoBox::new(
+        "systemd-networkd",
+        styled_block(vec![
+          vec![
+            (HIGHLIGHT, "systemd-networkd"),
+            (None, " is a "),
+            (HIGHLIGHT, "systemd-native network manager"),
+            (None, " that provides "),
+            (HIGHLIGHT, "efficient and lightweight"),
+            (None, " network configuration."),
+          ],
+          vec![
+            (None, "It offers "),
+            (HIGHLIGHT, "declarative configuration"),
+            (None, " through configuration files and integrates well with "),
+            (HIGHLIGHT, "systemd-resolved"),
+            (None, " for DNS management."),
+          ],
+          vec![
+            (None, "systemd-networkd is "),
+            (HIGHLIGHT, "perfect for servers"),
+            (None, " and "),
+            (HIGHLIGHT, "headless systems"),
+            (None, " but has limited support for complex desktop networking scenarios."),
+          ],
+        ]),
+      ),
+      _ => InfoBox::new(
+        "Unknown Network Backend",
+        styled_block(vec![vec![(
+          None,
+          "No information available for this network backend.",
+        )]]),
+      ),
     }
   }
   pub fn display_widget(installer: &mut Installer) -> Option<Box<dyn ConfigWidget>> {
@@ -3260,8 +3841,27 @@ impl Default for Network {
 
 impl Page for Network {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
-    let chunks = split_vert!(area, 1, [Constraint::Percentage(100)]);
-    self.backends.render(f, chunks[0]);
+    let vert_chunks = Layout::default()
+      .direction(Direction::Vertical)
+      .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+      .split(area);
+    let hor_chunks = split_hor!(
+      vert_chunks[0],
+      1,
+      [
+        Constraint::Percentage(40),
+        Constraint::Percentage(20),
+        Constraint::Percentage(40),
+      ]
+    );
+
+    let idx = self.backends.selected_idx;
+    let info_box = Self::get_network_info(idx);
+    self.backends.render(f, hor_chunks[1]);
+    if idx < 3 {
+      info_box.render(f, vert_chunks[1]);
+    }
+
     self.help_modal.render(f, area);
   }
 
