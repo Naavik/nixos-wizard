@@ -1,8 +1,4 @@
-use ratatui::{
-  crossterm::event::KeyCode,
-  layout::Constraint,
-  text::Line,
-};
+use ratatui::{crossterm::event::KeyCode, layout::Constraint, text::Line};
 
 use crate::{
   installer::{HIGHLIGHT, Installer, Page, Signal, systempkgs::get_available_pkgs},
@@ -168,11 +164,9 @@ impl Page for UserAccounts {
     area: ratatui::prelude::Rect,
   ) {
     let chunks = split_vert!(
-      area, 1,
-      [
-        Constraint::Percentage(60),
-        Constraint::Percentage(40),
-      ]
+      area,
+      1,
+      [Constraint::Percentage(60), Constraint::Percentage(40),]
     );
     let mut rows: Vec<Vec<String>> = installer
       .users
@@ -491,7 +485,8 @@ impl Page for AddUser {
     area: ratatui::prelude::Rect,
   ) {
     let hor_chunks = split_hor!(
-      area, 1,
+      area,
+      1,
       [
         Constraint::Percentage(25),
         Constraint::Percentage(50),
@@ -499,7 +494,8 @@ impl Page for AddUser {
       ]
     );
     let chunks = split_vert!(
-      hor_chunks[1], 1,
+      hor_chunks[1],
+      1,
       [
         Constraint::Length(3),
         Constraint::Length(3),
@@ -828,11 +824,13 @@ impl AlterUser {
   }
   pub fn render_main_menu(&mut self, f: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
     let vert_chunks = split_vert!(
-      area, 1,
+      area,
+      1,
       [Constraint::Percentage(50), Constraint::Percentage(50)]
     );
     let hor_chunks = split_hor!(
-      vert_chunks[0], 1,
+      vert_chunks[0],
+      1,
       [
         Constraint::Percentage(40),
         Constraint::Percentage(20),
@@ -844,7 +842,8 @@ impl AlterUser {
   pub fn render_name_change(&mut self, f: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
     let chunks = split_vert!(area, 1, [Constraint::Length(5), Constraint::Min(0)]);
     let hor_chunks = split_hor!(
-      chunks[0], 1,
+      chunks[0],
+      1,
       [
         Constraint::Percentage(25),
         Constraint::Percentage(50),
@@ -855,7 +854,8 @@ impl AlterUser {
   }
   pub fn render_pass_change(&mut self, f: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
     let chunks = split_vert!(
-      area, 1,
+      area,
+      1,
       [
         Constraint::Length(7),
         Constraint::Length(7),
@@ -863,7 +863,8 @@ impl AlterUser {
       ]
     );
     let hor_chunks1 = split_hor!(
-      chunks[0], 1,
+      chunks[0],
+      1,
       [
         Constraint::Percentage(25),
         Constraint::Percentage(50),
@@ -871,7 +872,8 @@ impl AlterUser {
       ]
     );
     let hor_chunks2 = split_hor!(
-      chunks[1], 1,
+      chunks[1],
+      1,
       [
         Constraint::Percentage(25),
         Constraint::Percentage(50),
@@ -888,11 +890,13 @@ impl AlterUser {
     area: ratatui::prelude::Rect,
   ) {
     let hor_chunks = split_hor!(
-      area, 1,
+      area,
+      1,
       [Constraint::Percentage(50), Constraint::Percentage(50)]
     );
     let line_editor_chunks = split_vert!(
-      hor_chunks[0], 1,
+      hor_chunks[0],
+      1,
       [
         Constraint::Length(5),
         Constraint::Percentage(80),
@@ -1455,11 +1459,13 @@ impl Page for ConfigureHomeManager {
         ]),
       );
       let vert_chunks = split_vert!(
-        area, 1,
+        area,
+        1,
         [Constraint::Percentage(70), Constraint::Percentage(30)]
       );
       let hor_chunks = split_hor!(
-        vert_chunks[1], 1,
+        vert_chunks[1],
+        1,
         [
           Constraint::Percentage(40),
           Constraint::Percentage(20),
@@ -1489,11 +1495,13 @@ impl Page for ConfigureHomeManager {
         )
       });
       let vert_chunks = split_vert!(
-        area, 1,
+        area,
+        1,
         [Constraint::Percentage(50), Constraint::Percentage(50)]
       );
       let hor_chunks = split_hor!(
-        vert_chunks[0], 1,
+        vert_chunks[0],
+        1,
         [
           Constraint::Percentage(40),
           Constraint::Percentage(20),
@@ -1576,7 +1584,9 @@ impl Page for ConfigureHomeManager {
           Box::new(Button::new("Configure User Packages")) as Box<dyn ConfigWidget>,
           Box::new(Button::new("Disable Home Manager")) as Box<dyn ConfigWidget>,
         ];
-        self.configuration_options.set_children_inplace(config_options);
+        self
+          .configuration_options
+          .set_children_inplace(config_options);
       }
       match event.code {
         ui_down!() => {
@@ -1607,7 +1617,9 @@ impl Page for ConfigureHomeManager {
                   Box::new(Button::new("Configure User Packages")) as Box<dyn ConfigWidget>,
                   Box::new(Button::new("Really?")) as Box<dyn ConfigWidget>,
                 ];
-                self.configuration_options.set_children_inplace(config_options);
+                self
+                  .configuration_options
+                  .set_children_inplace(config_options);
                 Signal::Wait
               } else {
                 if self.selected_user < installer.users.len() {

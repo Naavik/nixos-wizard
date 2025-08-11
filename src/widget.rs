@@ -2176,25 +2176,19 @@ impl PackagePicker {
 impl ConfigWidget for PackagePicker {
   fn render(&self, f: &mut Frame, area: Rect) {
     let hor_chunks = split_hor!(
-      area, 0,
-      [
-        Constraint::Percentage(50),
-        Constraint::Percentage(50),
-      ]
+      area,
+      0,
+      [Constraint::Percentage(50), Constraint::Percentage(50),]
     );
     let vert_chunks_left = split_vert!(
-      hor_chunks[0], 0,
-      [
-        Constraint::Length(5),
-        Constraint::Min(0),
-      ]
+      hor_chunks[0],
+      0,
+      [Constraint::Length(5), Constraint::Min(0),]
     );
     let vert_chunks_right = split_vert!(
-      hor_chunks[1], 0,
-      [
-        Constraint::Length(5),
-        Constraint::Min(0),
-      ]
+      hor_chunks[1],
+      0,
+      [Constraint::Length(5), Constraint::Min(0),]
     );
 
     self.selected.render(f, vert_chunks_left[1]);

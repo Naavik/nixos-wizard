@@ -554,7 +554,8 @@ impl Default for Menu {
 impl Page for Menu {
   fn render(&mut self, installer: &mut Installer, f: &mut Frame, area: Rect) {
     let chunks = split_hor!(
-      area, 1,
+      area,
+      1,
       [Constraint::Percentage(20), Constraint::Percentage(80)].as_ref()
     );
 
@@ -879,7 +880,8 @@ impl Default for SourceFlake {
 impl Page for SourceFlake {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
     let chunks = split_vert!(
-      area, 1,
+      area,
+      1,
       [
         Constraint::Percentage(40),
         Constraint::Length(5),
@@ -887,7 +889,8 @@ impl Page for SourceFlake {
       ]
     );
     let hor_chunks = split_hor!(
-      chunks[1], 1,
+      chunks[1],
+      1,
       [
         Constraint::Percentage(10),
         Constraint::Percentage(80),
@@ -1521,11 +1524,13 @@ impl Default for EnableFlakes {
 impl Page for EnableFlakes {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
     let chunks = split_vert!(
-      area, 1,
+      area,
+      1,
       [Constraint::Percentage(40), Constraint::Percentage(60)]
     );
     let hor_chunks = split_hor!(
-      chunks[1], 1,
+      chunks[1],
+      1,
       [
         Constraint::Percentage(30),
         Constraint::Percentage(40),
@@ -1855,11 +1860,13 @@ impl Default for Swap {
 impl Page for Swap {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
     let chunks = split_vert!(
-      area, 1,
+      area,
+      1,
       [Constraint::Percentage(40), Constraint::Percentage(60)]
     );
     let hor_chunks = split_hor!(
-      chunks[1], 1,
+      chunks[1],
+      1,
       [
         Constraint::Percentage(30),
         Constraint::Percentage(40),
@@ -2043,7 +2050,8 @@ impl Default for Hostname {
 impl Page for Hostname {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
     let chunks = split_vert!(
-      area, 1,
+      area,
+      1,
       [
         Constraint::Percentage(40),
         Constraint::Length(5),
@@ -2051,7 +2059,8 @@ impl Page for Hostname {
       ]
     );
     let hor_chunks = split_hor!(
-      chunks[1], 0,
+      chunks[1],
+      0,
       [
         Constraint::Percentage(10),
         Constraint::Percentage(80),
@@ -2268,7 +2277,8 @@ impl Default for RootPassword {
 impl Page for RootPassword {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
     let chunks = split_vert!(
-      area, 1,
+      area,
+      1,
       [
         Constraint::Percentage(40),
         Constraint::Length(12),
@@ -2276,7 +2286,8 @@ impl Page for RootPassword {
       ]
     );
     let hor_chunks = split_hor!(
-      chunks[1], 1,
+      chunks[1],
+      1,
       [
         Constraint::Percentage(20),
         Constraint::Percentage(60),
@@ -2284,7 +2295,8 @@ impl Page for RootPassword {
       ]
     );
     let vert_chunks = split_vert!(
-      hor_chunks[1], 0,
+      hor_chunks[1],
+      0,
       [Constraint::Length(5), Constraint::Length(5)]
     );
 
@@ -3567,7 +3579,8 @@ impl ConfigPreview {
 impl Page for ConfigPreview {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
     let chunks = split_vert!(
-      area, 1,
+      area,
+      1,
       [
         Constraint::Length(3), // Tab bar
         Constraint::Min(0),    // Config content
@@ -3577,7 +3590,8 @@ impl Page for ConfigPreview {
 
     // Tab bar for switching between system and disko config
     let tab_chunks = split_hor!(
-      chunks[0], 0,
+      chunks[0],
+      0,
       [Constraint::Percentage(50), Constraint::Percentage(50)]
     );
 

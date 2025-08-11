@@ -134,7 +134,8 @@ impl<'a> Default for Drives<'a> {
 impl<'a> Page for Drives<'a> {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
     let chunks = split_vert!(
-      area, 1,
+      area,
+      1,
       [Constraint::Percentage(70), Constraint::Percentage(30)]
     );
 
@@ -699,7 +700,8 @@ impl Page for SelectFilesystem {
       .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
       .split(area);
     let hor_chunks = split_hor!(
-      vert_chunks[0], 1,
+      vert_chunks[0],
+      1,
       [
         Constraint::Percentage(40),
         Constraint::Percentage(20),
@@ -886,7 +888,8 @@ impl Page for ManualPartition {
     let table_constraint = 20 + (5u16 * len as u16);
     let padding = 70u16.saturating_sub(table_constraint);
     let chunks = split_vert!(
-      area, 1,
+      area,
+      1,
       [
         Constraint::Percentage(table_constraint),
         Constraint::Percentage(30),
@@ -894,7 +897,8 @@ impl Page for ManualPartition {
       ]
     );
     let hor_chunks = split_hor!(
-      chunks[1], 1,
+      chunks[1],
+      1,
       [
         Constraint::Percentage(33),
         Constraint::Percentage(33),
@@ -1160,7 +1164,8 @@ impl Default for SuggestPartition {
 impl Page for SuggestPartition {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
     let chunks = split_vert!(
-      area, 1,
+      area,
+      1,
       [Constraint::Percentage(70), Constraint::Percentage(30)]
     );
 
@@ -1344,7 +1349,8 @@ impl NewPartition {
   }
   pub fn render_size_input(&mut self, f: &mut Frame, area: Rect) {
     let chunks = split_vert!(
-      area, 1,
+      area,
+      1,
       [
         Constraint::Percentage(40),
         Constraint::Length(7),
@@ -1352,7 +1358,8 @@ impl NewPartition {
       ]
     );
     let hor_chunks = split_hor!(
-      chunks[1], 1,
+      chunks[1],
+      1,
       [
         Constraint::Percentage(33),
         Constraint::Percentage(34),
@@ -1429,11 +1436,13 @@ impl NewPartition {
   }
   pub fn render_fs_select(&mut self, f: &mut Frame, area: Rect) {
     let vert_chunks = split_vert!(
-      area, 1,
+      area,
+      1,
       [Constraint::Percentage(50), Constraint::Percentage(50)]
     );
     let hor_chunks = split_hor!(
-      vert_chunks[0], 1,
+      vert_chunks[0],
+      1,
       [
         Constraint::Percentage(40),
         Constraint::Percentage(20),
@@ -1493,7 +1502,8 @@ impl NewPartition {
   }
   pub fn render_mount_point_input(&mut self, f: &mut Frame, area: Rect) {
     let chunks = split_vert!(
-      area, 1,
+      area,
+      1,
       [
         Constraint::Percentage(70),
         Constraint::Length(7),
@@ -1501,7 +1511,8 @@ impl NewPartition {
       ]
     );
     let hor_chunks = split_hor!(
-      chunks[1], 1,
+      chunks[1],
+      1,
       [
         Constraint::Percentage(33),
         Constraint::Percentage(34),
@@ -1709,7 +1720,8 @@ impl AlterPartition {
   }
   pub fn render_existing_part(&self, f: &mut Frame, area: Rect) {
     let chunks = split_vert!(
-      area, 1,
+      area,
+      1,
       [Constraint::Percentage(70), Constraint::Percentage(30)]
     );
 
@@ -1759,7 +1771,8 @@ impl AlterPartition {
   }
   pub fn render_modify_part(&self, f: &mut Frame, area: Rect) {
     let chunks = split_vert!(
-      area, 1,
+      area,
+      1,
       [Constraint::Percentage(70), Constraint::Percentage(30)]
     );
 
@@ -1795,7 +1808,8 @@ impl AlterPartition {
   }
   pub fn render_delete_part(&self, f: &mut Frame, area: Rect) {
     let chunks = split_vert!(
-      area, 1,
+      area,
+      1,
       [Constraint::Percentage(70), Constraint::Percentage(30)]
     );
 
@@ -2118,7 +2132,8 @@ impl Page for SetMountPoint {
       )
       .split(area);
     let hor_chunks = split_hor!(
-      chunks[1], 1,
+      chunks[1],
+      1,
       [
         Constraint::Percentage(15),
         Constraint::Percentage(70),
@@ -2201,7 +2216,8 @@ impl SetLabel {
 impl Page for SetLabel {
   fn render(&mut self, _installer: &mut Installer, f: &mut Frame, area: Rect) {
     let chunks = split_vert!(
-      area, 1,
+      area,
+      1,
       [
         Constraint::Percentage(40),
         Constraint::Length(7),
@@ -2209,7 +2225,8 @@ impl Page for SetLabel {
       ]
     );
     let hor_chunks = split_hor!(
-      chunks[1], 1,
+      chunks[1],
+      1,
       [
         Constraint::Percentage(15),
         Constraint::Percentage(70),

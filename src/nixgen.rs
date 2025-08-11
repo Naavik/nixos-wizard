@@ -182,38 +182,29 @@ impl NixWriter {
 
     cfg_attrs = merge_attrs!(imports, cfg_attrs, state_version);
 
+    // We use a constructed let statement, so we can easily add more stuff to it
+    // later if necessary Don't forget the semicolon
+    let mut let_statement_declarations = vec![];
+    if install_home_manager {
+      let_statement_declarations.push(
+				"home-manager = builtins.fetchTarball https://github.com/nix-community/home-manager/archive/release-25.05.tar.gz;"
+			)
+    }
+
+    let let_stmt = if !let_statement_declarations.is_empty() {
+      let joined_stmts = let_statement_declarations.join(" ");
+      format!("let {joined_stmts} in ")
+    } else {
+      "".to_string()
+    };
+
     let raw = if install_home_manager {
-      format!(
-        "{{ config, pkgs, ... }}: let home-manager = builtins.fetchTarball https://github.com/nix-community/home-manager/archive/release-25.05.tar.gz; in {cfg_attrs}"
-      )
+      format!("{{ config, pkgs, ... }}: {let_stmt} {cfg_attrs}")
     } else {
       format!("{{ config, pkgs, ... }}: {cfg_attrs}")
     };
     fmt_nix(raw)
   }
-  /*
-  "disko": {
-    "content": {
-      "partitions": {
-        "BOOT": {
-          "format": "vfat",
-          "mountpoint": "/boot",
-          "size": "524M",
-          "type": "EF00"
-        },
-        "ROOT": {
-          "format": "ext4",
-          "mountpoint": "/",
-          "size": "2T",
-          "type": "8300"
-        }
-      },
-      "type": "gpt"
-    },
-    "device": "/dev/nvme1n1",
-    "type": "disk"
-  },
-   */
   pub fn write_disko_config(&self, config: Value) -> anyhow::Result<String> {
     log::debug!("Writing Disko config: {config}");
     let device = config["device"].as_str().unwrap_or("/dev/sda");
