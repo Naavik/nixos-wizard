@@ -123,7 +123,27 @@ pub fn mb_to_sectors(mb: u64, sector_size: u64) -> u64 {
 /// intended to be ran using the flake like `nix run
 /// github:km-clay/nixos-wizard`, and it runs in a wrapped environment that
 /// includes `lsblk`. So if lsblk is somehow not available, user error.
+///
+/// We are also going to be filtering out the drive that is currently mounted on '/'
 pub fn lsblk() -> anyhow::Result<Vec<Disk>> {
+	fn is_safe_device(dev: &serde_json::Value) -> bool {
+		// Check this device and all children recursively
+		if let Some(mount) = dev.get("mountpoint").and_then(|m| m.as_str()) {
+			if mount == "/" {
+				return false;
+			}
+		}
+
+		if let Some(children) = dev.get("children").and_then(|c| c.as_array()) {
+			for child in children {
+				if !is_safe_device(child) {
+					return false;
+				}
+			}
+		}
+
+		true
+	}
   let output = Command::new("lsblk")
     .args([
       "--json",
@@ -143,11 +163,15 @@ pub fn lsblk() -> anyhow::Result<Vec<Disk>> {
   let lsblk_json: Value = serde_json::from_slice(&output.stdout)
     .map_err(|e| anyhow::anyhow!("Failed to parse lsblk output as JSON: {}", e))?;
 
-  let blockdevices = lsblk_json
-    .get("blockdevices")
-    .and_then(|v| v.as_array())
-    .ok_or_else(|| anyhow::anyhow!("lsblk output missing 'blockdevices' array"))?;
-  let mut disks = Vec::new();
+
+	let blockdevices = lsblk_json
+		.get("blockdevices")
+		.and_then(|v| v.as_array())
+		.ok_or_else(|| anyhow::anyhow!("lsblk output missing 'blockdevices' array"))?
+		.iter()
+		.filter(|dev| is_safe_device(dev))
+		.collect::<Vec<_>>();
+  let mut disks = vec![];
   for device in blockdevices {
     let dev_type = device
       .get("type")
