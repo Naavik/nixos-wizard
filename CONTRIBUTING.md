@@ -141,6 +141,7 @@ The main component is the `NixWriter` struct, which takes a JSON `Value` represe
 - `nixstr(val)` - Utility function that wraps strings in quotes for valid Nix syntax
 - `fmt_nix(nix)` - Formats generated Nix code using the `nixfmt` tool
 - `highlight_nix(nix)` - Syntax highlights Nix code using `bat` for display purposes
+- `attrset!` - A macro that allows you to write Nix attribute sets. Returns a `String`.
 
 ### Configuration Generation
 
