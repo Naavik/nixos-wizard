@@ -2917,7 +2917,10 @@ impl DesktopEnvironment {
             (HIGHLIGHT, "feature-rich"),
             (None, " and "),
             (HIGHLIGHT, "resource-efficient"),
-            (None, ", making it suitable for both power users and beginners."),
+            (
+              None,
+              ", making it suitable for both power users and beginners.",
+            ),
           ],
         ]),
       ),
@@ -3012,7 +3015,10 @@ impl DesktopEnvironment {
             (HIGHLIGHT, "modern features"),
             (None, " with "),
             (HIGHLIGHT, "traditional usability"),
-            (None, ", making it great for users transitioning from other operating systems."),
+            (
+              None,
+              ", making it great for users transitioning from other operating systems.",
+            ),
           ],
         ]),
       ),
@@ -3282,16 +3288,10 @@ pub struct Kernels {
 
 impl Kernels {
   pub fn new() -> Self {
-    let kernels = [
-      "linux",
-      "linux-lts",
-      "linux-zen",
-      "linux-hardened",
-      "None",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect::<Vec<_>>();
+    let kernels = ["linux", "linux-lts", "linux-zen", "linux-hardened", "None"]
+      .iter()
+      .map(|s| s.to_string())
+      .collect::<Vec<_>>();
     let mut kernels = StrList::new("Select Kernel", kernels);
     kernels.focus();
     let help_content = styled_block(vec![
@@ -3503,7 +3503,10 @@ impl Audio {
             (HIGHLIGHT, "PulseAudio"),
             (None, " is a "),
             (HIGHLIGHT, "mature and stable audio server"),
-            (None, " that has been the standard audio system on Linux for many years."),
+            (
+              None,
+              " that has been the standard audio system on Linux for many years.",
+            ),
           ],
           vec![
             (None, "It provides "),
@@ -3778,7 +3781,10 @@ impl Network {
           vec![
             (None, "It offers "),
             (HIGHLIGHT, "declarative configuration"),
-            (None, " through configuration files and integrates well with "),
+            (
+              None,
+              " through configuration files and integrates well with ",
+            ),
             (HIGHLIGHT, "systemd-resolved"),
             (None, " for DNS management."),
           ],
@@ -3787,7 +3793,10 @@ impl Network {
             (HIGHLIGHT, "perfect for servers"),
             (None, " and "),
             (HIGHLIGHT, "headless systems"),
-            (None, " but has limited support for complex desktop networking scenarios."),
+            (
+              None,
+              " but has limited support for complex desktop networking scenarios.",
+            ),
           ],
         ]),
       ),

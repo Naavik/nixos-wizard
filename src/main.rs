@@ -73,11 +73,18 @@ impl Drop for RawModeGuard {
 }
 
 fn main() -> anyhow::Result<()> {
+  if env::args().any(|arg| arg == "--version") {
+    let version = env!("CARGO_PKG_VERSION");
+    println!("nixos-wizard version {version}");
+    return Ok(());
+  }
+
   let uid = nix::unistd::getuid();
   log::debug!("UID: {uid}");
   if uid.as_raw() != 0 {
-    eprintln!("nixos-wizard: This installer must be run as root.");
-    std::process::exit(1);
+    return Err(anyhow::anyhow!(
+      "nixos-wizard: This installer must be run as root."
+    ));
   }
   // Set up panic handler to clean up terminal state
   std::panic::set_hook(Box::new(|panic_info| {
@@ -112,12 +119,7 @@ fn main() -> anyhow::Result<()> {
 
   debug!("Exiting TUI");
 
-  if let Err(err) = res {
-    log::error!("{err}");
-    eprintln!("Error: {err:?}");
-  }
-
-  Ok(())
+  res
 }
 
 fn handle_signal(

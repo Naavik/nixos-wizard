@@ -495,11 +495,11 @@ impl Page for AddUser {
     );
     let chunks = split_vert!(
       hor_chunks[1],
-      1,
+      0,
       [
-        Constraint::Length(3),
-        Constraint::Length(3),
-        Constraint::Length(3),
+        Constraint::Length(5),
+        Constraint::Length(5),
+        Constraint::Length(5),
         Constraint::Min(0),
       ]
     );
@@ -525,6 +525,7 @@ impl Page for AddUser {
         self.help_modal.hide();
         return Signal::Wait;
       }
+      KeyCode::Esc => return Signal::Pop,
       _ if self.help_modal.visible => {
         return Signal::Wait;
       }
@@ -601,9 +602,10 @@ impl Page for AddUser {
                 return Signal::Wait;
               };
               if pass != confirm {
-                self.pass_confirm.error("Passwords do not match");
-                self.pass_input.clear();
+                self.pass_input.error("Passwords do not match");
                 self.pass_confirm.clear();
+                self.pass_input.focus();
+                self.pass_confirm.unfocus();
                 return Signal::Wait;
               }
               let hashed = match super::RootPassword::mkpasswd(pass.to_string()) {
