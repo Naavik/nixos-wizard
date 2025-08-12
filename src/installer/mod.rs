@@ -22,7 +22,7 @@ use crate::{
   command,
   drives::{Disk, DiskItem, part_table},
   installer::{
-    systempkgs::{NIXPKGS, get_available_pkgs},
+    systempkgs::get_available_pkgs,
     users::User,
   },
   nixgen::highlight_nix,
@@ -40,7 +40,7 @@ pub mod drivepages;
 pub mod systempkgs;
 pub mod users;
 use drivepages::Drives;
-use systempkgs::{SystemPackages, fetch_nixpkgs};
+use systempkgs::SystemPackages;
 use users::UserAccounts;
 
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize)]

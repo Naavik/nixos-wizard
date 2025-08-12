@@ -1,33 +1,33 @@
 use serde_json::Value;
-use std::{
-  path::PathBuf,
-  process::{Command, Stdio},
-};
+use std::process::{Command, Stdio};
 
 use crate::{attrset, installer::users::User, merge_attrs};
 
-/// Just wraps a string in quotes basically
+/// Convert a value to a properly quoted Nix string literal
 ///
-/// Necessary for the generator to produce valid Nix strings
-/// and way better than writing 'format!("\"{string}\"")' everywhere
+/// This helper function ensures proper escaping and quoting for Nix syntax.
+/// Much cleaner than manually writing format!("\"{string}\"") everywhere.
 pub fn nixstr(val: impl ToString) -> String {
   let val = val.to_string();
   format!("\"{val}\"")
 }
+/// Format Nix code using the nixfmt tool for proper indentation and style
+///
+/// Assumes nixfmt is available in the environment (provided by the Nix flake)
 pub fn fmt_nix(nix: String) -> anyhow::Result<String> {
-  // This installer should be run from the flake that provides it
-  // And that flake provides 'nixfmt' as a build input, so we can assume it exists
-  // in this environment isn't Nix a nice thing
+  // Spawn nixfmt process with piped input/output for formatting
   let mut nixfmt_child = Command::new("nixfmt")
     .stdin(Stdio::piped())
     .stdout(Stdio::piped())
     .spawn()?;
 
+  // Send the unformatted Nix code to nixfmt's stdin
   if let Some(stdin) = nixfmt_child.stdin.as_mut() {
     use std::io::Write;
     stdin.write_all(nix.as_bytes())?;
   }
 
+  // Wait for nixfmt to complete and capture the formatted output
   let output = nixfmt_child.wait_with_output()?;
   if output.status.success() {
     let formatted = String::from_utf8(output.stdout)?;
@@ -37,12 +37,16 @@ pub fn fmt_nix(nix: String) -> anyhow::Result<String> {
     Err(anyhow::anyhow!("nixfmt failed: {}", err))
   }
 }
+/// Add syntax highlighting to Nix code using the bat tool
+///
+/// Useful for displaying formatted Nix configurations in the UI
 pub fn highlight_nix(nix: &str) -> anyhow::Result<String> {
+  // Spawn bat with Nix syntax highlighting
   let mut bat_child = Command::new("bat")
-    .arg("-p")
-    .arg("-f")
+    .arg("-p")          // Plain output (no line numbers)
+    .arg("-f")          // Force colored output
     .arg("-l")
-    .arg("nix")
+    .arg("nix")         // Use Nix syntax highlighting
     .stdin(Stdio::piped())
     .stdout(Stdio::piped())
     .spawn()?;
@@ -60,52 +64,59 @@ pub fn highlight_nix(nix: &str) -> anyhow::Result<String> {
     Err(anyhow::anyhow!("bat failed: {}", err))
   }
 }
-/*
-{
-  "config": {
-    "audioBackend": "PulseAudio",
-    "bootloader": "systemd-boot",
-    "desktopEnvironment": "KDE Plasma",
-    "enableSwap": true,
-    "greeter": "SDDM",
-    "hostname": "oganesson",
-    "kernel": "linux",
-    "keyboardLayout": "us",
-    "language": "en_US",
-    "locale": "en_US.UTF-8",
-    "networkBackend": "NetworkManager",
-    "profile": "Desktop",
-    "rootPassword": "changeme",
-    "swapSize": "10G",
-    "timezone": "America/New_York",
-    "useFlakes": true
-  }
-}
-*/
+// Example JSON configuration structure that this module processes:
+// {
+//   "config": {
+//     "audio_backend": "PulseAudio",
+//     "bootloader": "systemd-boot",
+//     "desktop_environment": "KDE Plasma",
+//     "hostname": "hostname",
+//     "kernels": ["linux"],
+//     "keyboard_layout": "us",
+//     "locale": "en_US.UTF-8",
+//     "network_backend": "NetworkManager",
+//     "timezone": "America/New_York",
+//     "users": [...],
+//     "system_pkgs": [...]
+//   },
+//   "disko": { ... }
+// }
+/// Container for generated NixOS configuration files
 #[derive(Debug)]
 pub struct Configs {
-  pub system: String,
-  pub disko: String,
-  pub flake_path: Option<String>,
+  pub system: String,           // NixOS system configuration
+  pub disko: String,            // Disk partitioning configuration
+  pub flake_path: Option<String>, // Optional flake path for advanced users
 }
 
+/// Converts JSON configuration to NixOS configuration files
+///
+/// Takes structured configuration data and generates:
+/// - NixOS system configuration (configuration.nix)
+/// - Disko disk partitioning configuration
 pub struct NixWriter {
-  config: Value,
+  config: Value,  // JSON configuration from the installer UI
 }
 
 impl NixWriter {
   pub fn new(config: Value) -> Self {
     Self { config }
   }
+  /// Generate both system and disko configurations from the JSON config
   pub fn write_configs(&self) -> anyhow::Result<Configs> {
+    // Generate disko (disk partitioning) configuration
     let disko = {
       let config = self.config["disko"].clone();
       self.write_disko_config(config)?
     };
+
+    // Generate NixOS system configuration
     let sys_cfg = {
       let config = self.config["config"].clone();
       self.write_sys_config(config)?
     };
+
+    // Extract optional flake path for advanced users
     let flake_path = self
       .config
       .get("flake_path")
@@ -117,19 +128,27 @@ impl NixWriter {
       flake_path,
     })
   }
+  /// Generate the main NixOS system configuration (configuration.nix)
+  ///
+  /// Processes each configuration option and converts it to appropriate Nix syntax
   pub fn write_sys_config(&self, config: Value) -> anyhow::Result<String> {
-    // initialize the attribute set
+    // Ensure we have a valid JSON object to work with
     let Value::Object(ref cfg) = config else {
       return Err(anyhow::anyhow!("Config must be a JSON object"));
     };
-    let mut cfg_attrs = String::from("{}");
-    let mut install_home_manager = false;
+
+    let mut cfg_attrs = String::from("{}");    // Start with empty attribute set
+    let mut install_home_manager = false;     // Track if home-manager is needed
+    // Process each configuration key and generate corresponding Nix attributes
     for (key, value) in cfg.iter() {
-      log::debug!("Processing key: {key}");
-      log::debug!("Value: {value}");
+      log::debug!("Processing config key: {key}");
+      log::debug!("Config value: {value}");
+
+      // Match configuration keys to their Nix configuration generators
       let parsed_config = match key.trim().to_lowercase().as_str() {
         "audio_backend" => value.as_str().map(Self::parse_audio),
         "bootloader" => {
+          // Bootloader parsing can fail, so handle errors explicitly
           let res = value.as_str().map(Self::parse_bootloader);
           match res {
             Some(Ok(cfg)) => Some(cfg),
@@ -154,20 +173,23 @@ impl NixWriter {
         "timezone" => value.as_str().map(Self::parse_timezone),
         "use_swap" => value.as_bool().filter(|&b| b).map(|_| Self::parse_swap()),
         "users" => {
+          // Parse user configurations and check if home-manager is needed
           let users: Vec<User> = serde_json::from_value(value.clone())?;
           install_home_manager = users.iter().any(|user| user.home_manager_cfg.is_some());
           Some(self.parse_users(users)?)
         }
         _ => {
-          log::warn!("Unknown configuration key: {key}");
+          log::warn!("Unknown configuration key '{key}' - skipping");
           None
         }
       };
 
+      // Merge the generated configuration into the main attribute set
       if let Some(config) = parsed_config {
         cfg_attrs = merge_attrs!(cfg_attrs, config);
       }
     }
+    // Set up imports based on whether home-manager is needed
     let imports = if install_home_manager {
       String::from(
         r#"{imports = [ (import "${home-manager}/nixos") ./hardware-configuration.nix ];}"#,
@@ -176,21 +198,24 @@ impl NixWriter {
       String::from("{imports = [./hardware-configuration.nix];}")
     };
 
+    // Set the NixOS state version (required for all configurations)
     let state_version = attrset! {
       "system.stateVersion" = nixstr("25.11");
     };
 
+    // Combine all configuration attributes
     cfg_attrs = merge_attrs!(imports, cfg_attrs, state_version);
 
-    // We use a constructed let statement, so we can easily add more stuff to it
-    // later if necessary Don't forget the semicolon
+    // Build let-binding declarations for external dependencies
     let mut let_statement_declarations = vec![];
+    // Add home-manager dependency if any users need it
     if install_home_manager {
       let_statement_declarations.push(
-				"home-manager = builtins.fetchTarball https://github.com/nix-community/home-manager/archive/release-25.05.tar.gz;"
-			)
+        "home-manager = builtins.fetchTarball https://github.com/nix-community/home-manager/archive/release-25.05.tar.gz;"
+      )
     }
 
+    // Construct the let-in statement if we have dependencies
     let let_stmt = if !let_statement_declarations.is_empty() {
       let joined_stmts = let_statement_declarations.join(" ");
       format!("let {joined_stmts} in ")
@@ -198,15 +223,23 @@ impl NixWriter {
       "".to_string()
     };
 
+    // Generate the final Nix function and format it
     let raw = if install_home_manager {
       format!("{{ config, pkgs, ... }}: {let_stmt} {cfg_attrs}")
     } else {
       format!("{{ config, pkgs, ... }}: {cfg_attrs}")
     };
+
+    // Format the generated Nix code for readability
     fmt_nix(raw)
   }
+  /// Generate Disko configuration for disk partitioning
+  ///
+  /// Converts the disk layout into Disko's declarative partition format
   pub fn write_disko_config(&self, config: Value) -> anyhow::Result<String> {
     log::debug!("Writing Disko config: {config}");
+
+    // Extract basic disk information
     let device = config["device"].as_str().unwrap_or("/dev/sda");
     let disk_type = config["type"].as_str().unwrap_or("disk");
     let content = Self::parse_disko_content(&config["content"])?;
@@ -230,10 +263,14 @@ impl NixWriter {
     })
   }
 
+  /// Parse the disk content structure for Disko
+  ///
+  /// Processes partition definitions and filesystem configurations
   fn parse_disko_content(content: &Value) -> anyhow::Result<String> {
     let content_type = content["type"].as_str().unwrap_or("gpt");
     let partitions = &content["partitions"];
 
+    // Process each partition definition
     if let Some(partitions_obj) = partitions.as_object() {
       let mut partition_attrs = Vec::new();
 

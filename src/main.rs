@@ -1,7 +1,7 @@
-use std::{env, fs::OpenOptions, io};
+use std::{env, io};
 
 use log::debug;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use ratatui::crossterm::event::{self, Event};
 use ratatui::{
   Terminal,
   crossterm::{
@@ -11,7 +11,7 @@ use ratatui::{
       enable_raw_mode,
     },
   },
-  layout::{Alignment, Constraint, Direction, Layout},
+  layout::Alignment,
   prelude::CrosstermBackend,
   style::{Color, Modifier, Style},
   text::Line,
@@ -49,24 +49,33 @@ pub fn styled_block<'a>(lines: Vec<Vec<(LineStyle, impl ToString)>>) -> Vec<Line
     .collect()
 }
 
+/// RAII guard to ensure terminal state is properly cleaned up
+/// when the TUI exits, either normally or via panic
 struct RawModeGuard;
 
 impl RawModeGuard {
   fn new(stdout: &mut io::Stdout) -> anyhow::Result<Self> {
+    // Enable raw mode to capture all keyboard input directly
     enable_raw_mode()?;
+
+    // Special handling for "linux" terminal (e.g., TTY console)
+    // In dumb terminals, entering alternate screen doesn't auto-clear,
+    // so we need to explicitly clear to avoid rendering artifacts
     if let Ok("linux") = env::var("TERM").as_deref() {
-      // we are in a dumb terminal
-      // so we have to explicitly clear the terminal before we start rendering stuff
-      // because in this context, entering an alternate screen doesn't do that for us
       execute!(stdout, Clear(ClearType::All))?;
     }
+
+    // Enter alternate screen buffer to preserve user's terminal content
     execute!(stdout, EnterAlternateScreen)?;
     Ok(Self)
   }
 }
 
+/// Cleanup terminal state when the guard is dropped
+/// This ensures proper restoration even if the program panics
 impl Drop for RawModeGuard {
   fn drop(&mut self) {
+    // Ignore errors during cleanup - we're likely panicking or shutting down
     let _ = disable_raw_mode();
     let _ = execute!(io::stdout(), LeaveAlternateScreen);
   }
@@ -86,17 +95,20 @@ fn main() -> anyhow::Result<()> {
       "nixos-wizard: This installer must be run as root."
     ));
   }
-  // Set up panic handler to clean up terminal state
+  // Set up panic handler to gracefully restore terminal state
+  // This prevents leaving the user's terminal in an unusable state
+  // if the installer crashes unexpectedly
   std::panic::set_hook(Box::new(|panic_info| {
     use ratatui::crossterm::{
       execute,
       terminal::{LeaveAlternateScreen, disable_raw_mode},
     };
-    // Try to clean up terminal state
+
+    // Attempt to restore terminal state - ignore errors since we're panicking
     let _ = disable_raw_mode();
     let _ = execute!(io::stdout(), LeaveAlternateScreen);
 
-    // Print panic info to stderr
+    // Print user-friendly panic information to stderr
     eprintln!("==================================================");
     eprintln!("NIXOS INSTALLER PANIC - Terminal state restored!");
     eprintln!("==================================================");
@@ -122,6 +134,8 @@ fn main() -> anyhow::Result<()> {
   res
 }
 
+/// Processes signals from UI pages to control navigation and installer actions
+/// Returns Ok(true) if the application should quit, Ok(false) to continue
 fn handle_signal(
   signal: Signal,
   page_stack: &mut Vec<Box<dyn Page>>,
@@ -138,6 +152,7 @@ fn handle_signal(
       page_stack.pop();
     }
     Signal::PopCount(n) => {
+      // Pop n pages from the stack, but never remove the root page
       for _ in 0..n {
         if page_stack.len() > 1 {
           page_stack.pop();
@@ -145,7 +160,7 @@ fn handle_signal(
       }
     }
     Signal::Unwind => {
-      // Used to return to the main menu
+      // Return to the main menu by removing all pages except the root
       while page_stack.len() > 1 {
         page_stack.pop();
       }
@@ -156,16 +171,16 @@ fn handle_signal(
     }
     Signal::WriteCfg => {
       use std::io::Write;
-      debug!("WriteCfg signal received");
+      debug!("WriteCfg signal received - starting installation process");
 
-      // Generate JSON configuration
+      // Convert installer state to JSON for the Nix configuration generator
       let config_json = installer.to_json()?;
       debug!(
         "Generated config JSON: {}",
         serde_json::to_string_pretty(&config_json)?
       );
 
-      // Create NixSerializer and generate Nix configs
+      // Generate NixOS system and disko (disk partitioning) configurations
       let serializer = crate::nixgen::NixWriter::new(config_json);
 
       match serializer.write_configs() {
@@ -173,12 +188,15 @@ fn handle_signal(
           debug!("system config: {}", cfg.system);
           debug!("disko config: {}", cfg.disko);
           debug!("flake_path: {:?}", cfg.flake_path);
+
+          // Create temporary files to hold the generated configurations
           let mut system_cfg = NamedTempFile::new()?;
           let mut disko_cfg = NamedTempFile::new()?;
 
           write!(system_cfg, "{}", cfg.system)?;
           write!(disko_cfg, "{}", cfg.disko)?;
 
+          // Navigate to the installation progress page
           page_stack.push(Box::new(InstallProgress::new(
             installer.clone(),
             system_cfg,
@@ -198,19 +216,23 @@ fn handle_signal(
   Ok(false) // Continue running
 }
 
-/// The main event loop
+/// Main TUI event loop that manages the installer interface
 ///
-/// Uses a stack of Pages to manage navigation
-/// Receives Signals from the pages to decide what to do
+/// This function implements a page-based navigation system using a stack:
+/// - Pages are pushed/popped based on user navigation
+/// - Each page can send signals to control the overall application flow
+/// - The event loop handles both user input and periodic updates (ticks)
 pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> anyhow::Result<()> {
   let mut installer = Installer::new();
   let mut page_stack: Vec<Box<dyn Page>> = vec![];
   page_stack.push(Box::new(Menu::new()));
 
+  // Set up timing for periodic updates (10 FPS)
   let tick_rate = Duration::from_millis(100);
   let mut last_tick = Instant::now();
 
   loop {
+    // Render the current UI state
     terminal.draw(|f| {
       let chunks = split_vert!(
         f.area(),
@@ -221,14 +243,14 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
         ]
       );
 
-      // Draw header with three columns: help text, title, empty
+      // Create three-column header: help text, title, and empty space
       let header_chunks = split_hor!(
         chunks[0],
         0,
         [
-          Constraint::Percentage(33), // Left section (help)
-          Constraint::Percentage(34), // Middle section (title)
-          Constraint::Percentage(33), // Right section (empty)
+          Constraint::Percentage(33), // Left: help text
+          Constraint::Percentage(34), // Center: application title
+          Constraint::Percentage(33), // Right: reserved for future use
         ]
       );
 
@@ -244,36 +266,40 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> an
         .alignment(Alignment::Center);
       f.render_widget(title, header_chunks[1]);
 
-      // Draw current page in the remaining area
+      // Render the current page (top of the navigation stack)
       if let Some(page) = page_stack.last_mut() {
         page.render(&mut installer, f, chunks[1]);
       }
     })?;
 
+    // Check if the current page has sent any signals
+    // Signals control navigation, installation, and application lifecycle
     if let Some(page) = page_stack.last()
       && let Some(signal) = page.signal()
       && handle_signal(signal, &mut page_stack, &mut installer)?
     {
-      // If we are here, then we have received Signal::Quit
+      // handle_signal returned true, meaning we should quit
       break;
     }
 
+    // Calculate remaining time until next tick
     let timeout = tick_rate
       .checked_sub(last_tick.elapsed())
       .unwrap_or_else(|| Duration::from_secs(0));
 
+    // Wait for user input or timeout
     if event::poll(timeout)? {
       if let Event::Key(key) = event::read()? {
         if let Some(page) = page_stack.last_mut() {
-          // Send the input to the page on top of the stack
+          // Forward keyboard input to the current page
           let signal = page.handle_input(&mut installer, key);
 
           if handle_signal(signal, &mut page_stack, &mut installer)? {
-            // If we are here, then we have received Signal::Quit
+            // Page requested application quit
             break;
           }
         } else {
-          // No pages somehow, push the initial page
+          // Safety fallback: if no pages exist, return to main menu
           page_stack.push(Box::new(Menu::new()));
         }
       }

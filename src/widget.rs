@@ -1,13 +1,10 @@
 use crate::{split_hor, split_vert};
-use itertools::Itertools;
-use portable_pty::{CommandBuilder, PtySize};
 use std::{
   collections::VecDeque,
   fs::{File, OpenOptions},
-  io::{BufRead, BufReader, Read, Seek, SeekFrom},
-  os::fd::{FromRawFd, IntoRawFd, OwnedFd},
+  io::{BufRead, BufReader, Seek, SeekFrom},
   path::PathBuf,
-  process::{Child, ChildStderr, ChildStdout, Command, Stdio},
+  process::{Child, Command, Stdio},
 };
 use throbber_widgets_tui::{BOX_DRAWING, ThrobberState};
 
@@ -28,6 +25,16 @@ use serde_json::Value;
 use crate::{installer::Signal, ui_down, ui_left, ui_up};
 use std::collections::BTreeMap;
 
+/// Manages package selection with efficient fuzzy search and filtering
+///
+/// This widget provides a two-pane interface for selecting system packages:
+/// - Left pane: selected packages
+/// - Right pane: available packages with real-time fuzzy search
+///
+/// Performance optimizations:
+/// - Caches fuzzy search results to avoid re-computation
+/// - Uses BTreeMap for O(log n) lookups and sorted iteration
+/// - Maintains original package order for consistency
 #[derive(Debug, Clone)]
 pub struct PackageManager {
   // Maps package name -> original index in nixpkgs list
@@ -105,6 +112,10 @@ impl PackageManager {
     self.selected.keys().cloned().collect()
   }
 
+  /// Filter available packages using fuzzy matching with caching
+  ///
+  /// Returns packages sorted by relevance score (best matches first)
+  /// Caches results to avoid expensive recomputation on repeated searches
   pub fn get_available_filtered(&mut self, filter: &str) -> Vec<String> {
     // Check if we can reuse cached results
     if let Some(ref last_filter) = self.last_filter {
@@ -113,7 +124,7 @@ impl PackageManager {
       }
     }
 
-    // Need to recompute
+    // Need to recompute fuzzy matches
     use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
     let matcher = SkimMatcherV2::default();
 
@@ -124,7 +135,7 @@ impl PackageManager {
       }
     }
 
-    // Cache the results
+    // Cache the results for future use
     self.last_filter = Some(filter.to_string());
     self.cached_filtered = filtered_map;
 
@@ -132,6 +143,8 @@ impl PackageManager {
   }
 
   /// Get packages from cache sorted by fuzzy match score (best matches first)
+  ///
+  /// Uses negative score for descending sort (higher scores = better matches)
   fn get_sorted_by_score_from_cache(&self) -> Vec<String> {
     let mut packages_with_score: Vec<_> = self
       .cached_filtered
@@ -153,7 +166,9 @@ impl PackageManager {
     self.selected.contains_key(package)
   }
 
-  /// Get current available list without recomputing if filter hasn't changed
+  /// Get current available packages, respecting any active filter
+  ///
+  /// Returns filtered results if a search is active, otherwise all available packages
   pub fn get_current_available(&self) -> Vec<String> {
     if self.last_filter.is_some() {
       self.get_sorted_by_score_from_cache()
@@ -175,6 +190,13 @@ pub trait ConfigWidget {
   }
 }
 
+/// Builder pattern for creating complex widget layouts
+///
+/// Provides a fluent interface for constructing widget containers with:
+/// - Custom layouts (horizontal/vertical splits)
+/// - Optional borders and titles
+/// - Input event callbacks
+/// - Child widget management
 pub struct WidgetBoxBuilder {
   title: Option<String>,
   layout: Option<Layout>,
@@ -213,10 +235,13 @@ impl WidgetBoxBuilder {
     self.render_borders = Some(render);
     self
   }
+  /// Generate a default horizontal layout that splits space evenly among widgets
   fn get_default_layout(mut num_widgets: usize) -> Layout {
     if num_widgets == 0 {
-      num_widgets = 1;
-    } // avoid division by zero
+      num_widgets = 1;  // Prevent division by zero
+    }
+
+    // Calculate equal percentage for each widget
     let space_per_widget = 100 / num_widgets;
     let mut constraints = vec![];
     for _ in 0..num_widgets {
@@ -224,6 +249,7 @@ impl WidgetBoxBuilder {
         space_per_widget as u16,
       ));
     }
+
     Layout::default()
       .direction(ratatui::layout::Direction::Horizontal)
       .constraints(constraints)
@@ -1217,187 +1243,6 @@ impl<'a> ConfigWidget for InfoBox<'a> {
   }
 }
 
-impl From<Vec<Command>> for ShellCommand {
-  fn from(cmds: Vec<Command>) -> Self {
-    ShellCommand::new(cmds).unwrap()
-  }
-}
-
-pub enum ChildProcess {
-  Standard(Child),
-  Pty(Box<dyn portable_pty::Child + Send + Sync>),
-}
-
-pub struct ShellCommand {
-  pub commands: Option<Vec<Command>>,
-  pub child_procs: Option<Vec<ChildProcess>>,
-  pub pty_pair: Option<portable_pty::PtyPair>,
-}
-
-impl ShellCommand {
-  pub fn new(commands: Vec<Command>) -> anyhow::Result<Self> {
-    Ok(Self {
-      commands: Some(commands),
-      child_procs: None,
-      pty_pair: None,
-    })
-  }
-  pub fn run_pipeline(&mut self) -> anyhow::Result<()> {
-    let Some(cmds) = self.commands.take() else {
-      return Err(anyhow::anyhow!("No commands to run"));
-    };
-
-    // Create PTY for terminal isolation
-    let pty_system = portable_pty::native_pty_system();
-    let pty_pair = pty_system.openpty(PtySize {
-      rows: 24,
-      cols: 80,
-      pixel_width: 0,
-      pixel_height: 0,
-    })?;
-
-    let mut child_procs = vec![];
-    let len = cmds.len();
-
-    if len == 1 {
-      // Single command - use PTY directly
-      let cmd = cmds.into_iter().next().unwrap();
-      let mut cmd_builder = CommandBuilder::new(cmd.get_program());
-      cmd_builder.args(cmd.get_args());
-      let child = pty_pair.slave.spawn_command(cmd_builder)?;
-      child_procs.push(ChildProcess::Pty(child));
-    } else {
-      // Multiple commands - still need pipes between them, but last one uses PTY
-      let mut pipes: Vec<(Option<OwnedFd>, Option<OwnedFd>)> = vec![];
-
-      for _ in 0..len - 1 {
-        let (r, w) = nix::unistd::pipe()?;
-        pipes.push((Some(r), Some(w)))
-      }
-
-      for (i, mut cmd) in cmds.into_iter().enumerate() {
-        let stdin = if i == 0 {
-          Stdio::piped()
-        } else {
-          let Some(pipe) = pipes[i - 1].0.take() else {
-            unreachable!()
-          };
-          unsafe { Stdio::from_raw_fd(pipe.into_raw_fd()) }
-        };
-
-        if i == len - 1 {
-          // Last command in pipeline - use PTY
-          let mut cmd_builder = CommandBuilder::new(cmd.get_program());
-          cmd_builder.args(cmd.get_args());
-          // Set up stdin for PTY command - need to convert from Stdio to proper fd
-          let child = pty_pair.slave.spawn_command(cmd_builder)?;
-          child_procs.push(ChildProcess::Pty(child));
-        } else {
-          // Intermediate command - use regular pipe
-          let stdout = {
-            let Some(pipe) = pipes[i].1.take() else {
-              unreachable!()
-            };
-            unsafe { Stdio::from_raw_fd(pipe.into_raw_fd()) }
-          };
-          let child = cmd.stdin(stdin).stdout(stdout).spawn()?;
-          child_procs.push(ChildProcess::Standard(child));
-        }
-      }
-    }
-
-    self.pty_pair = Some(pty_pair);
-    self.child_procs = Some(child_procs);
-    Ok(())
-  }
-
-  pub fn single(cmd: Command) -> anyhow::Result<Self> {
-    Self::new(vec![cmd])
-  }
-
-  pub fn nom(cmd: Command) -> anyhow::Result<Self> {
-    let nom = Command::new("nom");
-    Self::new(vec![cmd, nom])
-  }
-
-  pub fn stdin(&mut self) -> Option<&mut std::process::ChildStdin> {
-    match self.child_procs.as_mut()?.first_mut()? {
-      ChildProcess::Standard(child) => child.stdin.as_mut(),
-      ChildProcess::Pty(_) => None, // PTY handles stdin differently
-    }
-  }
-  pub fn take_stdin(&mut self) -> Option<std::process::ChildStdin> {
-    match self.child_procs.as_mut()?.first_mut()? {
-      ChildProcess::Standard(child) => child.stdin.take(),
-      ChildProcess::Pty(_) => None, // PTY handles stdin differently
-    }
-  }
-
-  pub fn stdout(&mut self) -> Option<&mut std::process::ChildStdout> {
-    match self.child_procs.as_mut()?.last_mut()? {
-      ChildProcess::Standard(child) => child.stdout.as_mut(),
-      ChildProcess::Pty(_) => None, // PTY handles this through the master
-    }
-  }
-  pub fn take_stdout(&mut self) -> Option<std::process::ChildStdout> {
-    match self.child_procs.as_mut()?.last_mut()? {
-      ChildProcess::Standard(child) => child.stdout.take(),
-      ChildProcess::Pty(_) => None, // PTY handles this through the master
-    }
-  }
-
-  pub fn stderr(&mut self) -> Option<&mut std::process::ChildStderr> {
-    match self.child_procs.as_mut()?.last_mut()? {
-      ChildProcess::Standard(child) => child.stderr.as_mut(),
-      ChildProcess::Pty(_) => None, // PTY handles this through the master
-    }
-  }
-  pub fn take_stderr(&mut self) -> Option<std::process::ChildStderr> {
-    match self.child_procs.as_mut()?.last_mut()? {
-      ChildProcess::Standard(child) => child.stderr.take(),
-      ChildProcess::Pty(_) => None, // PTY handles this through the master
-    }
-  }
-
-  pub fn take_pty_reader(&mut self) -> Option<Box<dyn Read + Send>> {
-    self
-      .pty_pair
-      .take()
-      .map(|pty| pty.master.try_clone_reader().unwrap())
-  }
-
-  pub fn wait_all(&mut self) -> anyhow::Result<Vec<std::process::ExitStatus>> {
-    let Some(children) = self.child_procs.as_mut() else {
-      return Err(anyhow::anyhow!("No child processes to wait for"));
-    };
-    let mut results = Vec::with_capacity(children.len());
-    for child in children {
-      match child {
-        ChildProcess::Standard(child) => {
-          results.push(child.wait()?);
-        }
-        ChildProcess::Pty(child) => {
-          // portable_pty::Child has different interface - convert to ExitStatus
-          let exit_status = child.wait()?;
-          // Convert portable_pty exit status to std::process::ExitStatus
-          // This is tricky since ExitStatus can't be constructed directly
-          // For now, let's use a workaround
-          if exit_status.success() {
-            // Create a successful status by running "true"
-            let status = std::process::Command::new("true").status()?;
-            results.push(status);
-          } else {
-            // Create a failed status by running "false"
-            let status = std::process::Command::new("false").status()?;
-            results.push(status);
-          }
-        }
-      }
-    }
-    Ok(results)
-  }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StepStatus {
   Inactive,
@@ -1616,144 +1461,6 @@ impl<'a> ConfigWidget for InstallSteps<'a> {
     // InstallSteps does not need focus
   }
 
-  fn is_focused(&self) -> bool {
-    false
-  }
-}
-
-/// Like infobox, except it runs a bunch of commands
-/// and the content is the lines produced by the output of those commands
-/// commands is a vecdeque of unspawned std::process::Commands
-pub struct ShellBox<'a> {
-  pub title: String,
-  pub commands: VecDeque<Command>,
-  pub num_cmds: usize,
-  pub content: Vec<Line<'a>>,
-  pub running: bool,
-  pub error: bool,
-  current_command: Option<Child>,
-  stdout_reader: Option<BufReader<ChildStdout>>,
-  stderr_reader: Option<BufReader<ChildStderr>>,
-}
-
-impl<'a> ShellBox<'a> {
-  pub fn new(title: impl Into<String>, commands: impl IntoIterator<Item = Command>) -> Self {
-    let commands = commands.into_iter().collect::<VecDeque<_>>();
-    Self {
-      title: title.into(),
-      num_cmds: commands.len(),
-      commands,
-      content: vec![],
-      running: false,
-      error: false,
-      current_command: None,
-      stdout_reader: None,
-      stderr_reader: None,
-    }
-  }
-  pub fn progress(&self) -> u32 {
-    // return 0-100 based on commands.len() vs self.num_cmds
-    if self.num_cmds == 0 {
-      100
-    } else {
-      let completed = self.num_cmds - self.commands.len();
-      ((completed as f64 / self.num_cmds as f64) * 100.0).round() as u32
-    }
-  }
-  pub fn start_next_command(&mut self) -> anyhow::Result<()> {
-    if let Some(mut cmd) = self.commands.pop_front() {
-      let mut child = cmd.spawn()?;
-      // Use PTY reader if available, otherwise fall back to stdout/stderr
-      self.stdout_reader = child.stdout.take().map(BufReader::new);
-      self.stderr_reader = child.stderr.take().map(BufReader::new);
-      self.current_command = Some(child);
-    }
-    Ok(())
-  }
-  pub fn read_output(&mut self) -> anyhow::Result<()> {
-    let mut line = String::new();
-
-    // Read from PTY if available (preferred)
-    // Fall back to separate stdout/stderr readers
-    if let Some(stdout) = self.stdout_reader.as_mut() {
-      while stdout.read_line(&mut line)? > 0 {
-        let text = format!("| {line}").into_text()?;
-        self.content.extend(text.lines);
-        line.clear();
-      }
-    }
-
-    if let Some(stderr) = self.stderr_reader.as_mut() {
-      while stderr.read_line(&mut line)? > 0 {
-        let text = format!("| {line}").into_text()?;
-        self.content.extend(text.lines);
-        line.clear();
-      }
-    }
-
-    Ok(())
-  }
-  pub fn tick(&mut self) -> anyhow::Result<()> {
-    if !self.running && !self.error {
-      self.start_next_command()?;
-      self.running = true;
-    }
-
-    if self.current_command.is_some() {
-      self.read_output()?;
-    }
-
-    if let Some(child) = &mut self.current_command {
-      if let Ok(status) = child.wait() {
-        self.current_command = None;
-        self.stdout_reader = None;
-        self.stderr_reader = None;
-        self.running = false;
-        if !status.success() {
-          self.content.push(Line::from(Span::styled(
-            "Installation failed".to_string(),
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-          )));
-          self.error = true;
-        }
-      }
-    }
-    Ok(())
-  }
-}
-
-impl<'a> ConfigWidget for ShellBox<'a> {
-  fn handle_input(&mut self, _key: KeyEvent) -> Signal {
-    Signal::Wait
-  }
-  fn render(&self, f: &mut Frame, area: Rect) {
-    let height = area.height as usize;
-    let content_len = self.content.len();
-    let mut lines = vec![];
-
-    if content_len < height {
-      let padding_lines = height - (content_len + 2);
-      lines.extend(std::iter::repeat_n(Line::from(""), padding_lines));
-    }
-
-    lines.extend(self.content.iter().cloned());
-
-    let paragraph = Paragraph::new(lines)
-      .block(
-        Block::default()
-          .title(self.title.clone())
-          .borders(Borders::ALL),
-      )
-      .wrap(ratatui::widgets::Wrap { trim: true });
-
-    f.render_widget(paragraph, area);
-  }
-  fn focus(&mut self) {
-    // ShellBox does not need focus
-  }
-  fn unfocus(&mut self) {
-    // ShellBox does not need focus
-  }
   fn is_focused(&self) -> bool {
     false
   }
@@ -2044,6 +1751,19 @@ impl<'a> HelpModal<'a> {
   }
 }
 
+/// Complete package selection interface with dual-pane layout
+///
+/// Provides a sophisticated package picker with:
+/// - Left pane: currently selected packages
+/// - Right pane: available packages with fuzzy search
+/// - Search bar: real-time filtering
+/// - Help modal: keyboard shortcuts and usage instructions
+///
+/// Navigation:
+/// - Tab: switch between panes
+/// - /: focus search bar
+/// - Enter: add/remove packages
+/// - ?: show help
 pub struct PackagePicker {
   pub focused: bool,
   pub package_manager: PackageManager,
@@ -2417,15 +2137,23 @@ impl ConfigWidget for ProgressBar {
   }
 }
 
+/// Widget that displays streaming log output from a file
+///
+/// Features:
+/// - Real-time log file monitoring (similar to 'tail -f')
+/// - ANSI color code support for highlighted output
+/// - Circular buffer to prevent memory growth
+/// - Handles log rotation and file truncation
+/// - Efficient incremental reading
 pub struct LogBox<'a> {
   title: String,
   focused: bool,
-  pub line_buf: VecDeque<Line<'a>>,
-  max_buf_size: usize,
-  log_file: Option<File>,
-  reader: Option<BufReader<File>>,
-  file_pos: u64,
-  log_path: Option<PathBuf>,
+  pub line_buf: VecDeque<Line<'a>>,    // Circular buffer of log lines
+  max_buf_size: usize,                // Maximum lines to keep in memory
+  log_file: Option<File>,              // File handle for writing
+  reader: Option<BufReader<File>>,     // File reader for monitoring
+  file_pos: u64,                      // Current read position in file
+  log_path: Option<PathBuf>,           // Path to the log file
 }
 
 impl<'a> LogBox<'a> {
@@ -2465,25 +2193,29 @@ impl<'a> LogBox<'a> {
     Ok(())
   }
 
-  /// Call this periodically (e.g. once per render tick) to read new lines from
-  /// the log file
+  /// Poll the log file for new content - call this each render cycle
+  ///
+  /// Efficiently reads only new lines since last poll:
+  /// - Detects file truncation/rotation and handles gracefully
+  /// - Parses ANSI escape codes for colored output
+  /// - Maintains circular buffer to prevent memory bloat
   pub fn poll_log(&mut self) -> anyhow::Result<()> {
     let Some(path) = &self.log_path else {
       return Ok(());
     };
 
-    // Check if file exists, if not return early
+    // Early return if log file doesn't exist yet
     if !path.exists() {
       return Ok(());
     }
 
-    // Get current file size
+    // Check current file size for changes
     let current_size = std::fs::metadata(path)?.len();
 
-    // If file was truncated/rotated, reset position and reopen file
+    // Handle log rotation or truncation
     if current_size < self.file_pos {
       self.file_pos = 0;
-      // Reopen the file since it was truncated
+      // Reopen the file since it was truncated or rotated
       let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -2495,7 +2227,7 @@ impl<'a> LogBox<'a> {
       self.reader = Some(reader);
     }
 
-    // If no new data, return early
+    // No new data to read
     if current_size <= self.file_pos {
       return Ok(());
     }
@@ -2520,20 +2252,22 @@ impl<'a> LogBox<'a> {
 
     reader.seek(SeekFrom::Start(self.file_pos))?;
 
-    // Read all new lines
+    // Read and process all new lines
     let mut line = String::new();
     while reader.read_line(&mut line)? > 0 {
       let trimmed = strip_ansi_escapes::strip_str(line.trim_end());
 
-      // Skip script wrapper lines
+      // Parse ANSI escape codes for colored terminal output
       if let Ok(text) = trimmed.into_text() {
         for parsed_line in text.lines {
           self.line_buf.push_back(parsed_line);
+          // Maintain circular buffer size
           if self.line_buf.len() > self.max_buf_size {
             self.line_buf.pop_front();
           }
         }
       } else {
+        // Fallback for lines that can't be parsed
         self.line_buf.push_back(trimmed.to_string().into());
         if self.line_buf.len() > self.max_buf_size {
           self.line_buf.pop_front();
@@ -2543,7 +2277,7 @@ impl<'a> LogBox<'a> {
       line.clear();
     }
 
-    // Update our position to current end of file
+    // Update file position to track what we've read
     self.file_pos = current_size;
     Ok(())
   }
