@@ -168,7 +168,8 @@ impl PackageManager {
 
   /// Get current available packages, respecting any active filter
   ///
-  /// Returns filtered results if a search is active, otherwise all available packages
+  /// Returns filtered results if a search is active, otherwise all available
+  /// packages
   pub fn get_current_available(&self) -> Vec<String> {
     if self.last_filter.is_some() {
       self.get_sorted_by_score_from_cache()
@@ -235,10 +236,11 @@ impl WidgetBoxBuilder {
     self.render_borders = Some(render);
     self
   }
-  /// Generate a default horizontal layout that splits space evenly among widgets
+  /// Generate a default horizontal layout that splits space evenly among
+  /// widgets
   fn get_default_layout(mut num_widgets: usize) -> Layout {
     if num_widgets == 0 {
-      num_widgets = 1;  // Prevent division by zero
+      num_widgets = 1; // Prevent division by zero
     }
 
     // Calculate equal percentage for each widget
@@ -2148,12 +2150,12 @@ impl ConfigWidget for ProgressBar {
 pub struct LogBox<'a> {
   title: String,
   focused: bool,
-  pub line_buf: VecDeque<Line<'a>>,    // Circular buffer of log lines
-  max_buf_size: usize,                // Maximum lines to keep in memory
-  log_file: Option<File>,              // File handle for writing
-  reader: Option<BufReader<File>>,     // File reader for monitoring
-  file_pos: u64,                      // Current read position in file
-  log_path: Option<PathBuf>,           // Path to the log file
+  pub line_buf: VecDeque<Line<'a>>, // Circular buffer of log lines
+  max_buf_size: usize,              // Maximum lines to keep in memory
+  log_file: Option<File>,           // File handle for writing
+  reader: Option<BufReader<File>>,  // File reader for monitoring
+  file_pos: u64,                    // Current read position in file
+  log_path: Option<PathBuf>,        // Path to the log file
 }
 
 impl<'a> LogBox<'a> {

@@ -82,18 +82,19 @@ pub fn bytes_readable(bytes: u64) -> String {
 pub fn parse_sectors(s: &str, sector_size: u64, total_sectors: u64) -> Option<u64> {
   let s = s.trim().to_lowercase();
 
-  // Define multipliers for both binary (1024-based) and decimal (1000-based) units
+  // Define multipliers for both binary (1024-based) and decimal (1000-based)
+  // units
   let units: [(&str, f64); 10] = [
-    ("tib", (1u64 << 40) as f64),  // 2^40 bytes (binary terabyte)
-    ("tb", 1_000_000_000_000.0),   // 10^12 bytes (decimal terabyte)
-    ("gib", (1u64 << 30) as f64),  // 2^30 bytes (binary gigabyte)
-    ("gb", 1_000_000_000.0),       // 10^9 bytes (decimal gigabyte)
-    ("mib", (1u64 << 20) as f64),  // 2^20 bytes (binary megabyte)
-    ("mb", 1_000_000.0),           // 10^6 bytes (decimal megabyte)
-    ("kib", (1u64 << 10) as f64),  // 2^10 bytes (binary kilobyte)
-    ("kb", 1_000.0),               // 10^3 bytes (decimal kilobyte)
-    ("b", 1.0),                    // bytes
-    ("%", 0.0),                    // percentage (handled separately)
+    ("tib", (1u64 << 40) as f64), // 2^40 bytes (binary terabyte)
+    ("tb", 1_000_000_000_000.0),  // 10^12 bytes (decimal terabyte)
+    ("gib", (1u64 << 30) as f64), // 2^30 bytes (binary gigabyte)
+    ("gb", 1_000_000_000.0),      // 10^9 bytes (decimal gigabyte)
+    ("mib", (1u64 << 20) as f64), // 2^20 bytes (binary megabyte)
+    ("mb", 1_000_000.0),          // 10^6 bytes (decimal megabyte)
+    ("kib", (1u64 << 10) as f64), // 2^10 bytes (binary kilobyte)
+    ("kb", 1_000.0),              // 10^3 bytes (decimal kilobyte)
+    ("b", 1.0),                   // bytes
+    ("%", 0.0),                   // percentage (handled separately)
   ];
 
   for (unit, multiplier) in units.iter() {
@@ -128,15 +129,17 @@ pub fn mb_to_sectors(mb: u64, sector_size: u64) -> u64 {
 
 /// Discover available disk drives using the `lsblk` command
 ///
-/// This function safely identifies disk drives that can be used for installation:
+/// This function safely identifies disk drives that can be used for
+/// installation:
 /// - Uses `lsblk` to get comprehensive disk information in JSON format
-/// - Filters out the drive hosting the current live system (mounted at "/" or "/iso")
+/// - Filters out the drive hosting the current live system (mounted at "/" or
+///   "/iso")
 /// - Returns structured disk information suitable for partitioning
 ///
 /// The installer assumes `lsblk` is available (provided by the Nix environment)
 pub fn lsblk() -> anyhow::Result<Vec<Disk>> {
   /// Check if a device is safe to use for installation
-  /// 
+  ///
   /// A device is considered unsafe if it or any of its partitions
   /// are currently being used by the live system
   fn is_safe_device(dev: &serde_json::Value) -> bool {
@@ -161,8 +164,8 @@ pub fn lsblk() -> anyhow::Result<Vec<Disk>> {
   }
   // Execute lsblk with specific options:
   // --json: JSON output format
-  // -o: specify columns (name, size, type, mount, filesystem, label, start, physical sector size)
-  // -b: output sizes in bytes (not human-readable)
+  // -o: specify columns (name, size, type, mount, filesystem, label, start,
+  // physical sector size) -b: output sizes in bytes (not human-readable)
   let output = Command::new("lsblk")
     .args([
       "--json",
@@ -188,16 +191,17 @@ pub fn lsblk() -> anyhow::Result<Vec<Disk>> {
     .and_then(|v| v.as_array())
     .ok_or_else(|| anyhow::anyhow!("lsblk output missing 'blockdevices' array"))?
     .iter()
-    .filter(|dev| is_safe_device(dev))  // Only include devices safe for partitioning
+    .filter(|dev| is_safe_device(dev)) // Only include devices safe for partitioning
     .collect::<Vec<_>>();
-  // Parse each block device, but only include actual disks (not partitions, LVM, etc.)
+  // Parse each block device, but only include actual disks (not partitions, LVM,
+  // etc.)
   let mut disks = vec![];
   for device in blockdevices {
     let dev_type = device
       .get("type")
       .and_then(|v| v.as_str())
       .ok_or_else(|| anyhow::anyhow!("Device entry missing TYPE"))?;
-    
+
     // Only process devices of type "disk" (physical drives)
     if dev_type == "disk" {
       let disk = parse_disk(device.clone())?;
@@ -208,7 +212,7 @@ pub fn lsblk() -> anyhow::Result<Vec<Disk>> {
 }
 
 /// Parse a single disk entry from lsblk JSON output into our Disk structure
-/// 
+///
 /// Extracts disk metadata (name, size, sector size) and recursively parses
 /// any existing partitions as child objects
 pub fn parse_disk(disk: Value) -> anyhow::Result<Disk> {
@@ -246,7 +250,7 @@ pub fn parse_disk(disk: Value) -> anyhow::Result<Disk> {
 }
 
 /// Parse a single partition entry from lsblk JSON output
-/// 
+///
 /// Converts lsblk partition data into our DiskItem::Partition structure
 pub fn parse_partition(part: &Value) -> anyhow::Result<DiskItem> {
   let obj = part
@@ -333,7 +337,7 @@ pub fn part_table(disk_items: &[DiskItem], sector_size: u64) -> TableWidget {
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 /// Represents a physical disk drive and its partition layout
-/// 
+///
 /// Tracks both the current partition layout and the original layout
 /// discovered at startup, allowing users to revert changes
 pub struct Disk {
@@ -344,7 +348,7 @@ pub struct Disk {
   initial_layout: Vec<DiskItem>,
   total_used_sectors: u64,
   /// Current partition layout including partitions and free space
-  /// 
+  ///
   /// Partitions use half-open ranges: [start, start+size)
   /// This means start sector is included, end sector is excluded
   layout: Vec<DiskItem>,
@@ -546,14 +550,15 @@ impl Disk {
   }
 
   /// Recalculate free space gaps between partitions
-  /// 
+  ///
   /// This function rebuilds the layout by:
   /// 1. Keeping deleted partitions at the beginning (for UI visibility)
   /// 2. Finding gaps between existing partitions
   /// 3. Adding FreeSpace entries for gaps larger than 5MB
   pub fn calculate_free_space(&mut self) {
     // Separate deleted partitions from active ones
-    // Deleted partitions are kept for UI display but don't affect free space calculation
+    // Deleted partitions are kept for UI display but don't affect free space
+    // calculation
     let (deleted, mut rest) = self.layout.iter().cloned().partition::<Vec<_>, _>(
       |item| matches!(item, DiskItem::Partition(p) if p.status == PartStatus::Delete),
     );
@@ -568,13 +573,13 @@ impl Disk {
     // Walk through partitions in order, identifying gaps
     for p in rest.iter() {
       let DiskItem::Partition(p) = p else {
-        continue;  // Skip non-partition items
+        continue; // Skip non-partition items
       };
-      
+
       // Check if there's a gap before this partition
       if p.start() > cursor {
         let size = p.start() - cursor;
-        
+
         // Only create FreeSpace entries for gaps larger than 5MB
         // Smaller gaps are typically unusable due to alignment requirements
         if size > mb_to_sectors(5, self.sector_size) {
@@ -610,7 +615,7 @@ impl Disk {
   }
 
   /// Clean up the disk layout by sorting and merging adjacent free space
-  /// 
+  ///
   /// This ensures:
   /// - Deleted partitions appear first (for UI visibility)
   /// - Adjacent free space regions are merged into single entries
@@ -665,18 +670,18 @@ impl Disk {
   }
 
   /// Apply the default NixOS partitioning scheme to this disk
-  /// 
+  ///
   /// Creates a standard two-partition layout:
   /// - 500MB FAT32 boot partition (ESP) at the beginning
   /// - Remaining space for root filesystem (specified fs_type or default)
-  /// 
+  ///
   /// All existing partitions are marked for deletion
   pub fn use_default_layout(&mut self, fs_type: Option<String>) {
     // Remove all free space and newly created partitions
     // Keep existing partitions so user can see what will be deleted
     self.layout.retain(|item| match item {
-      DiskItem::FreeSpace { .. } => false,  // Remove all free space
-      DiskItem::Partition(part) => part.status != PartStatus::Create,  // Remove created partitions
+      DiskItem::FreeSpace { .. } => false, // Remove all free space
+      DiskItem::Partition(part) => part.status != PartStatus::Create, // Remove created partitions
     });
     // Mark all existing partitions for deletion
     for part in self.layout.iter_mut() {
@@ -688,16 +693,16 @@ impl Disk {
     // Create 500MB FAT32 boot partition starting at sector 2048 (1MB aligned)
     // This serves as the EFI System Partition (ESP)
     let boot_part = Partition::new(
-      2048,  // Start at 1MB boundary
-      mb_to_sectors(500, self.sector_size),  // 500MB size
+      2048,                                 // Start at 1MB boundary
+      mb_to_sectors(500, self.sector_size), // 500MB size
       self.sector_size,
       PartStatus::Create,
       None,
-      Some("fat32".into()),                 // FAT32 filesystem
-      Some("/boot".into()),                 // Mount at /boot
-      Some("BOOT".into()),                  // Partition label
+      Some("fat32".into()), // FAT32 filesystem
+      Some("/boot".into()), // Mount at /boot
+      Some("BOOT".into()),  // Partition label
       false,
-      vec!["boot".into(), "esp".into()],    // Mark as bootable ESP
+      vec!["boot".into(), "esp".into()], // Mark as bootable ESP
     );
     // Create root partition using all remaining space
     let root_part = Partition::new(
@@ -706,11 +711,11 @@ impl Disk {
       self.sector_size,
       PartStatus::Create,
       None,
-      fs_type,                       // User-specified or default filesystem
-      Some("/".into()),              // Mount as root filesystem
-      Some("ROOT".into()),           // Partition label
+      fs_type,             // User-specified or default filesystem
+      Some("/".into()),    // Mount as root filesystem
+      Some("ROOT".into()), // Partition label
       false,
-      vec![],                        // No special flags
+      vec![], // No special flags
     );
     // Add the new partitions to the layout
     self.layout.push(DiskItem::Partition(boot_part));

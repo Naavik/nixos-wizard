@@ -1,10 +1,10 @@
 /// Create a std::process::Command with optional arguments
-/// 
+///
 /// This macro simplifies command creation by:
 /// - Automatically importing std::process::Command
 /// - Converting all arguments to strings
 /// - Supporting both command-only and command-with-args patterns
-/// 
+///
 /// Examples:
 /// ```
 /// let cmd1 = command!("ls");
@@ -29,12 +29,12 @@ macro_rules! command {
 
 #[macro_export]
 /// Generate Nix attribute set syntax from Rust expressions
-/// 
+///
 /// This macro creates properly formatted Nix attribute sets:
 /// - Keys are automatically quoted if needed
 /// - Values are inserted as-is (use nixstr() for string literals)
 /// - Produces valid Nix syntax ready for inclusion in configs
-/// 
+///
 /// Example:
 /// ```
 /// let attrs = attrset! {
@@ -56,13 +56,13 @@ macro_rules! attrset {
 
 #[macro_export]
 /// Merge multiple Nix attribute sets into one
-/// 
+///
 /// This macro combines multiple attribute sets by:
 /// - Extracting the contents from each set (removing outer braces)
 /// - Concatenating all attributes
 /// - Wrapping the result in new braces
 /// - Validating that inputs are properly formatted attribute sets
-/// 
+///
 /// Example:
 /// ```
 /// let set1 = attrset! { "a" = "1"; };
@@ -95,12 +95,12 @@ macro_rules! merge_attrs {
 
 #[macro_export]
 /// Generate Nix list syntax from Rust expressions
-/// 
+///
 /// Creates properly formatted Nix lists with space-separated elements:
 /// - Each item is converted to string representation
 /// - Items are joined with spaces (Nix list syntax)
 /// - Produces valid Nix syntax ready for use in configurations
-/// 
+///
 /// Example:
 /// ```
 /// let packages = list!["git", "vim", "firefox"];
@@ -175,10 +175,10 @@ macro_rules! ui_right {
 
 #[macro_export]
 /// Split a screen area vertically with specified constraints
-/// 
+///
 /// Creates a vertical layout that divides the given area into rows.
 /// Each constraint defines how much space each row should take.
-/// 
+///
 /// Example:
 /// ```
 /// let chunks = split_vert!(area, 1, [Constraint::Length(3), Constraint::Min(0)]);
@@ -197,10 +197,10 @@ macro_rules! split_vert {
 
 #[macro_export]
 /// Split a screen area horizontally with specified constraints
-/// 
+///
 /// Creates a horizontal layout that divides the given area into columns.
 /// Each constraint defines how much space each column should take.
-/// 
+///
 /// Example:
 /// ```
 /// let chunks = split_hor!(area, 0, [Constraint::Percentage(50), Constraint::Percentage(50)]);

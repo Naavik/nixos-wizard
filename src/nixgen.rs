@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::process::{Command, Stdio};
 
 use crate::{attrset, installer::users::User, merge_attrs};
@@ -43,10 +43,10 @@ pub fn fmt_nix(nix: String) -> anyhow::Result<String> {
 pub fn highlight_nix(nix: &str) -> anyhow::Result<String> {
   // Spawn bat with Nix syntax highlighting
   let mut bat_child = Command::new("bat")
-    .arg("-p")          // Plain output (no line numbers)
-    .arg("-f")          // Force colored output
+    .arg("-p") // Plain output (no line numbers)
+    .arg("-f") // Force colored output
     .arg("-l")
-    .arg("nix")         // Use Nix syntax highlighting
+    .arg("nix") // Use Nix syntax highlighting
     .stdin(Stdio::piped())
     .stdout(Stdio::piped())
     .spawn()?;
@@ -84,8 +84,8 @@ pub fn highlight_nix(nix: &str) -> anyhow::Result<String> {
 /// Container for generated NixOS configuration files
 #[derive(Debug)]
 pub struct Configs {
-  pub system: String,           // NixOS system configuration
-  pub disko: String,            // Disk partitioning configuration
+  pub system: String,             // NixOS system configuration
+  pub disko: String,              // Disk partitioning configuration
   pub flake_path: Option<String>, // Optional flake path for advanced users
 }
 
@@ -95,7 +95,7 @@ pub struct Configs {
 /// - NixOS system configuration (configuration.nix)
 /// - Disko disk partitioning configuration
 pub struct NixWriter {
-  config: Value,  // JSON configuration from the installer UI
+  config: Value, // JSON configuration from the installer UI
 }
 
 impl NixWriter {
@@ -130,15 +130,16 @@ impl NixWriter {
   }
   /// Generate the main NixOS system configuration (configuration.nix)
   ///
-  /// Processes each configuration option and converts it to appropriate Nix syntax
+  /// Processes each configuration option and converts it to appropriate Nix
+  /// syntax
   pub fn write_sys_config(&self, config: Value) -> anyhow::Result<String> {
     // Ensure we have a valid JSON object to work with
     let Value::Object(ref cfg) = config else {
       return Err(anyhow::anyhow!("Config must be a JSON object"));
     };
 
-    let mut cfg_attrs = String::from("{}");    // Start with empty attribute set
-    let mut install_home_manager = false;     // Track if home-manager is needed
+    let mut cfg_attrs = String::from("{}"); // Start with empty attribute set
+    let mut install_home_manager = false; // Track if home-manager is needed
     // Process each configuration key and generate corresponding Nix attributes
     for (key, value) in cfg.iter() {
       log::debug!("Processing config key: {key}");
@@ -169,6 +170,7 @@ impl NixWriter {
         "network_backend" => value.as_str().map(Self::parse_network_backend),
         "profile" => None,
         "root_passwd_hash" => Some(Self::parse_root_pass_hash(value)?),
+				"ssh_config" => value.as_object().and_then(Self::parse_ssh_config),
         "system_pkgs" => value.as_array().map(Self::parse_system_packages),
         "timezone" => value.as_str().map(Self::parse_timezone),
         "use_swap" => value.as_bool().filter(|&b| b).map(|_| Self::parse_swap()),
@@ -328,6 +330,65 @@ impl NixWriter {
       })
     }
   }
+	fn parse_ssh_config(value: &Map<String,Value>) -> Option<String> {
+		/*
+  The SshCfg struct has these fields:
+  - enable: bool → services.openssh.enable
+  - port: u16 → services.openssh.ports
+  - password_auth: bool → services.openssh.settings.PasswordAuthentication
+  - root_login: bool → services.openssh.settings.PermitRootLogin
+
+  With default values of:
+  - enable: false
+  - port: 22
+  - password_auth: true
+  - root_login: false
+  {
+    # SSH Configuration
+    services.openssh = {
+      enable = true;           # corresponds to SshCfg.enable
+      ports = [ 2222 ];        # corresponds to SshCfg.port
+  (default 22)
+      settings = {
+        PasswordAuthentication = true;   # corresponds to
+  SshCfg.password_auth
+        PermitRootLogin = "yes";        # corresponds to
+  SshCfg.root_login
+      };
+    };
+  }
+		*/
+		let enable = value["enable"]
+			.as_bool()
+			.unwrap_or(false);
+		if !enable {
+			return None;
+		}
+		let port = value["port"]
+			.as_u64()
+			.unwrap_or(22) as u16;
+		let password_auth = value["password_auth"]
+			.as_bool()
+			.unwrap_or(true);
+		let root_login = value["root_login"]
+			.as_bool()
+			.unwrap_or(false);
+		let root_login_option = match root_login {
+			true => "yes".to_string(),
+			false => "no".to_string(),
+		};
+
+		let options = attrset! {
+			enable = enable;
+			ports = format!("[{}]", port);
+			settings = attrset! {
+				PasswordAuthentication = password_auth;
+				PermitRootLogin = nixstr(root_login_option);
+			};
+		};
+
+		Some(format!("{{ services.openssh = {options}; }}"))
+	}
   fn parse_timezone(value: &str) -> String {
     attrset! {
       "time.timeZone" = nixstr(value);
@@ -487,6 +548,7 @@ impl NixWriter {
     match value.to_lowercase().as_str() {
       "pulseaudio" => attrset! {
         "services.pulseaudio.enable" = true;
+				"services.pipewire.enable" = false;
       },
       "pipewire" => attrset! {
         "services.pipewire.enable" = true;

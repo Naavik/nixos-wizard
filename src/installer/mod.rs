@@ -21,10 +21,7 @@ use tempfile::NamedTempFile;
 use crate::{
   command,
   drives::{Disk, DiskItem, part_table},
-  installer::{
-    systempkgs::get_available_pkgs,
-    users::User,
-  },
+  installer::{systempkgs::get_available_pkgs, users::User},
   nixgen::highlight_nix,
   split_hor, split_vert, styled_block, ui_back, ui_close, ui_down, ui_enter, ui_left, ui_right,
   ui_up,
@@ -37,11 +34,32 @@ use crate::{
 const HIGHLIGHT: Option<(Color, Modifier)> = Some((Color::Yellow, Modifier::BOLD));
 
 pub mod drivepages;
+pub mod networking;
 pub mod systempkgs;
 pub mod users;
 use drivepages::Drives;
+use networking::NetworkConfig;
 use systempkgs::SystemPackages;
 use users::UserAccounts;
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct SshCfg {
+  pub enable: bool,
+  pub port: u16,
+  pub password_auth: bool,
+  pub root_login: bool,
+}
+
+impl Default for SshCfg {
+  fn default() -> Self {
+    Self {
+      enable: false,
+      port: 22,
+      password_auth: true,
+      root_login: false,
+    }
+  }
+}
 
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Installer {
@@ -62,6 +80,7 @@ pub struct Installer {
   pub system_pkgs: Vec<String>,
   pub desktop_environment: Option<String>,
   pub network_backend: Option<String>,
+  pub ssh_config: Option<SshCfg>,
   pub timezone: Option<String>,
 
   pub drives: Vec<Disk>,
@@ -115,6 +134,7 @@ impl Installer {
       "greeter": self.greeter,
       "desktop_environment": self.desktop_environment,
       "network_backend": self.network_backend,
+      "ssh_config": self.ssh_config,
       "system_pkgs": self.system_pkgs,
       "users": self.users,
       "kernels": self.kernels
@@ -309,7 +329,7 @@ impl MenuPages {
       MenuPages::Audio => Audio::display_widget(installer),
       MenuPages::Kernels => Kernels::display_widget(installer),
       MenuPages::SystemPackages => SystemPackages::display_widget(installer),
-      MenuPages::Network => Network::display_widget(installer),
+      MenuPages::Network => NetworkConfig::display_widget(installer),
       MenuPages::Timezone => Timezone::display_widget(installer),
     }
   }
@@ -350,7 +370,7 @@ impl MenuPages {
       MenuPages::Audio => Audio::page_info(),
       MenuPages::Kernels => Kernels::page_info(),
       MenuPages::SystemPackages => SystemPackages::page_info(),
-      MenuPages::Network => Network::page_info(),
+      MenuPages::Network => NetworkConfig::page_info(),
       MenuPages::Timezone => Timezone::page_info(),
     }
   }
@@ -382,7 +402,7 @@ impl MenuPages {
           pkgs,
         )))
       }
-      MenuPages::Network => Signal::Push(Box::new(Network::new())),
+      MenuPages::Network => Signal::Push(Box::new(NetworkConfig::new())),
       MenuPages::Timezone => Signal::Push(Box::new(Timezone::new())),
     }
   }
