@@ -170,7 +170,7 @@ impl NixWriter {
         "network_backend" => value.as_str().map(Self::parse_network_backend),
         "profile" => None,
         "root_passwd_hash" => Some(Self::parse_root_pass_hash(value)?),
-				"ssh_config" => value.as_object().and_then(Self::parse_ssh_config),
+        "ssh_config" => value.as_object().and_then(Self::parse_ssh_config),
         "system_pkgs" => value.as_array().map(Self::parse_system_packages),
         "timezone" => value.as_str().map(Self::parse_timezone),
         "use_swap" => value.as_bool().filter(|&b| b).map(|_| Self::parse_swap()),
@@ -330,65 +330,57 @@ impl NixWriter {
       })
     }
   }
-	fn parse_ssh_config(value: &Map<String,Value>) -> Option<String> {
-		/*
-  The SshCfg struct has these fields:
-  - enable: bool → services.openssh.enable
-  - port: u16 → services.openssh.ports
-  - password_auth: bool → services.openssh.settings.PasswordAuthentication
-  - root_login: bool → services.openssh.settings.PermitRootLogin
+  fn parse_ssh_config(value: &Map<String, Value>) -> Option<String> {
+    /*
+    The SshCfg struct has these fields:
+    - enable: bool → services.openssh.enable
+    - port: u16 → services.openssh.ports
+    - password_auth: bool → services.openssh.settings.PasswordAuthentication
+    - root_login: bool → services.openssh.settings.PermitRootLogin
 
-  With default values of:
-  - enable: false
-  - port: 22
-  - password_auth: true
-  - root_login: false
-  {
-    # SSH Configuration
-    services.openssh = {
-      enable = true;           # corresponds to SshCfg.enable
-      ports = [ 2222 ];        # corresponds to SshCfg.port
-  (default 22)
-      settings = {
-        PasswordAuthentication = true;   # corresponds to
-  SshCfg.password_auth
-        PermitRootLogin = "yes";        # corresponds to
-  SshCfg.root_login
+    With default values of:
+    - enable: false
+    - port: 22
+    - password_auth: true
+    - root_login: false
+    {
+      # SSH Configuration
+      services.openssh = {
+        enable = true;           # corresponds to SshCfg.enable
+        ports = [ 2222 ];        # corresponds to SshCfg.port
+    (default 22)
+        settings = {
+          PasswordAuthentication = true;   # corresponds to
+    SshCfg.password_auth
+          PermitRootLogin = "yes";        # corresponds to
+    SshCfg.root_login
+        };
+      };
+    }
+      */
+    let enable = value["enable"].as_bool().unwrap_or(false);
+    if !enable {
+      return None;
+    }
+    let port = value["port"].as_u64().unwrap_or(22) as u16;
+    let password_auth = value["password_auth"].as_bool().unwrap_or(true);
+    let root_login = value["root_login"].as_bool().unwrap_or(false);
+    let root_login_option = match root_login {
+      true => "yes".to_string(),
+      false => "no".to_string(),
+    };
+
+    let options = attrset! {
+      enable = enable;
+      ports = format!("[{}]", port);
+      settings = attrset! {
+        PasswordAuthentication = password_auth;
+        PermitRootLogin = nixstr(root_login_option);
       };
     };
+
+    Some(format!("{{ services.openssh = {options}; }}"))
   }
-		*/
-		let enable = value["enable"]
-			.as_bool()
-			.unwrap_or(false);
-		if !enable {
-			return None;
-		}
-		let port = value["port"]
-			.as_u64()
-			.unwrap_or(22) as u16;
-		let password_auth = value["password_auth"]
-			.as_bool()
-			.unwrap_or(true);
-		let root_login = value["root_login"]
-			.as_bool()
-			.unwrap_or(false);
-		let root_login_option = match root_login {
-			true => "yes".to_string(),
-			false => "no".to_string(),
-		};
-
-		let options = attrset! {
-			enable = enable;
-			ports = format!("[{}]", port);
-			settings = attrset! {
-				PasswordAuthentication = password_auth;
-				PermitRootLogin = nixstr(root_login_option);
-			};
-		};
-
-		Some(format!("{{ services.openssh = {options}; }}"))
-	}
   fn parse_timezone(value: &str) -> String {
     attrset! {
       "time.timeZone" = nixstr(value);
@@ -548,7 +540,7 @@ impl NixWriter {
     match value.to_lowercase().as_str() {
       "pulseaudio" => attrset! {
         "services.pulseaudio.enable" = true;
-				"services.pipewire.enable" = false;
+        "services.pipewire.enable" = false;
       },
       "pipewire" => attrset! {
         "services.pipewire.enable" = true;
